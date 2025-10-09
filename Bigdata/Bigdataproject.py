@@ -444,28 +444,31 @@ def render_spam():
 
     st.markdown("<h2>📧 SMS/Email Spam</h2><div class='subtle'>ทดสอบข้อความว่าเป็น Ham หรือ Spam</div>", unsafe_allow_html=True)
 
-    # ---- ทำนายข้อความเดี่ยว ----
-    with st.container():
-        st.markdown("### 🔎 ทำนายข้อความเดี่ยว")
-        txt = st.text_area("ใส่ข้อความที่ต้องการทำนาย", height=100, placeholder="เช่น: Win a FREE iPhone now! Click link…")
+    # ---- Model files status ----
+    have_files = SPAM_MODEL_PATH.exists() and SPAM_VECT_PATH.exists()
+    if not have_files:
+        st.warning(
+            "ยังไม่พบไฟล์โมเดลที่ตำแหน่งต่อไปนี้:\n"
+            f"- {SPAM_MODEL_PATH}\n- {SPAM_VECT_PATH}\n\n"
+            "ให้วางไฟล์ด้วย Git ตามวิธี C ที่คุณเลือก แล้วกด Restart แอปครับ 🙂"
+        )
 
-        model_path = SPAM_MODEL_PATH
-        vec_path   = SPAM_VECT_PATH
+    # ---- ทำนายข้อความเดี่ยว (ซ่อนจนกว่าจะมีไฟล์) ----
+    if have_files:
+        with st.container():
+            st.markdown("### 🔎 ทำนายข้อความเดี่ยว")
+            txt = st.text_area("ใส่ข้อความที่ต้องการทำนาย", height=100, placeholder="เช่น: Win a FREE iPhone now! Click link…")
 
-        if st.button("ทำนาย", use_container_width=True):
-            if not txt.strip():
-                st.warning("กรุณาใส่ข้อความก่อนทำนาย")
-            else:
-                try:
-                    if not model_path.exists() or not vec_path.exists():
-                        st.error(f"ไม่พบไฟล์โมเดล '{model_path}' หรือ '{vec_path}'. กรุณาวางไฟล์ทั้งสองไว้ที่ main/Bigdata/")
-                    else:
-                        model = joblib.load(str(model_path))
-                        vectorizer = joblib.load(str(vec_path))
+            if st.button("ทำนาย", use_container_width=True):
+                if not txt.strip():
+                    st.warning("กรุณาใส่ข้อความก่อนทำนาย")
+                else:
+                    try:
+                        model = joblib.load(str(SPAM_MODEL_PATH))
+                        vectorizer = joblib.load(str(SPAM_VECT_PATH))
                         X = vectorizer.transform([txt])
                         if hasattr(model, "predict_proba"):
                             p = model.predict_proba(X)[0]
-                            # Assuming classes_: 0=ham, 1=spam
                             spam_class_index = np.where(model.classes_ == 1)[0][0]
                             ham_class_index  = np.where(model.classes_ == 0)[0][0]
                             spam_p = float(p[spam_class_index])
@@ -476,10 +479,10 @@ def render_spam():
                             y = model.predict(X)[0]
                             pred_label = "Spam" if y == 1 else "Ham"
                             st.success(f"ผลทำนาย: **{pred_label}**")
-                except Exception as e:
-                    st.error(f"เกิดข้อผิดพลาด: {e}")
+                    except Exception as e:
+                        st.error(f"เกิดข้อผิดพลาด: {e}")
 
-    st.markdown("---")
+        st.markdown("---")
 
     # ---- Business & Dataset ----
     with st.expander("💼 Business Value & Use Cases", expanded=True):
@@ -686,22 +689,7 @@ def render_spam():
 - ในงานจริง ควรมีการ **ติดตามผล (Monitoring)** ของโมเดล และ **เทรนใหม่ (Retraining)** เป็นระยะเมื่อข้อมูลมีการเปลี่ยนแปลง
         """)
 
-        # Save best model/vectorizer
-        with st.container():
-            st.markdown("#### 💾 บันทึกโมเดล/เวกเตอร์ (เพื่อใช้กับการทำนายข้อความเดี่ยว)")
-            csm = st.columns(3)
-            with csm[0]:
-                save_model_path = st.text_input("บันทึกโมเดลเป็น", value=str(SPAM_MODEL_PATH), key="save_model")
-            with csm[1]:
-                save_vec_path = st.text_input("บันทึกเวกเตอร์เป็น", value=str(SPAM_VECT_PATH), key="save_vec")
-            with csm[2]:
-                if st.button("บันทึก (joblib.dump)", use_container_width=True, key="save_button"):
-                    best_model_to_save = best_pipe.named_steps["clf"]
-                    best_vec_to_save   = best_pipe.named_steps["vec"]
-                    import joblib
-                    joblib.dump(best_model_to_save, save_model_path)
-                    joblib.dump(best_vec_to_save, save_vec_path)
-                    st.success(f"บันทึกแล้ว: {save_model_path}, {save_vec_path}")
+        # (ไม่บันทึกอัตโนมัติ เพราะคุณเลือกวิธี C แล้ว)
 
 # ================== PAGE 4: Waste (Keras .keras, auto input size + CAMERA) ==================
 @st.cache_resource
