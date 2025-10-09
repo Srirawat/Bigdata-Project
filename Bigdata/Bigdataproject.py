@@ -10,6 +10,14 @@ import base64, zipfile, io, os, re, numpy as np
 # ================== CONFIG ==================
 st.set_page_config(page_title="Profile + Notion + Spam + Waste", layout="wide")
 
+# ---------- PATH PREFIX (บังคับให้เรียกผ่าน main/Bigdata/...) ----------
+PREFIX = Path("main/Bigdata").resolve()
+IMG_DEFAULT_PATH = PREFIX / "image" / "FUJI0041.jpg"
+SPAM_MODEL_PATH = PREFIX / "spam_model.pkl"
+SPAM_VECT_PATH  = PREFIX / "vectorizer.pkl"
+SPAM_DATA_PATH  = PREFIX / "SMSSpamCollection.csv"
+WASTE_MODEL_DEFAULT = PREFIX / "waste_model.keras"
+
 # ================== CSS ==================
 st.markdown(
     """
@@ -42,7 +50,7 @@ def _img(img, caption=None):
     except TypeError:
         st.image(img, caption=caption, use_column_width=True)
 
-def image_to_base64(path: str):
+def image_to_base64(path: Path):
     try:
         with open(path, "rb") as f:
             data = base64.b64encode(f.read()).decode("utf-8")
@@ -441,27 +449,27 @@ def render_spam():
         st.markdown("### 🔎 ทำนายข้อความเดี่ยว")
         txt = st.text_area("ใส่ข้อความที่ต้องการทำนาย", height=100, placeholder="เช่น: Win a FREE iPhone now! Click link…")
 
-        model_path = "spam_model.pkl"
-        vec_path = "vectorizer.pkl"
+        model_path = SPAM_MODEL_PATH
+        vec_path   = SPAM_VECT_PATH
 
         if st.button("ทำนาย", use_container_width=True):
             if not txt.strip():
                 st.warning("กรุณาใส่ข้อความก่อนทำนาย")
             else:
                 try:
-                    if not os.path.exists(model_path) or not os.path.exists(vec_path):
-                        st.error(f"ไม่พบไฟล์โมเดล '{model_path}' หรือ '{vec_path}'. กรุณาวางไฟล์ทั้งสองไว้ในโฟลเดอร์เดียวกับสคริปต์นี้")
+                    if not model_path.exists() or not vec_path.exists():
+                        st.error(f"ไม่พบไฟล์โมเดล '{model_path}' หรือ '{vec_path}'. กรุณาวางไฟล์ทั้งสองไว้ที่ main/Bigdata/")
                     else:
-                        model = joblib.load(model_path)
-                        vectorizer = joblib.load(vec_path)
+                        model = joblib.load(str(model_path))
+                        vectorizer = joblib.load(str(vec_path))
                         X = vectorizer.transform([txt])
                         if hasattr(model, "predict_proba"):
                             p = model.predict_proba(X)[0]
                             # Assuming classes_: 0=ham, 1=spam
                             spam_class_index = np.where(model.classes_ == 1)[0][0]
-                            ham_class_index = np.where(model.classes_ == 0)[0][0]
+                            ham_class_index  = np.where(model.classes_ == 0)[0][0]
                             spam_p = float(p[spam_class_index])
-                            ham_p = float(p[ham_class_index])
+                            ham_p  = float(p[ham_class_index])
                             pred = "Spam" if spam_p > ham_p else "Ham"
                             st.success(f"ผลทำนาย: **{pred}** | Ham={ham_p:.4f}  Spam={spam_p:.4f}")
                         else:
@@ -483,15 +491,15 @@ def render_spam():
         )
     with st.expander("📚 แหล่งข้อมูล (Dataset)", expanded=True):
         st.markdown(
-            """
+            f"""
 - **ชุดข้อมูล:** *SMS Spam Collection* (ป้ายกำกับ `ham`/`spam`)
+- **ไฟล์ที่ใช้:** `{SPAM_DATA_PATH}`
 - **ที่มา (UCI ML Repository):** https://archive.ics.uci.edu/ml/datasets/sms+spam+collection
-- **ไฟล์:** `SMSSpamCollection.csv` (TSV: `label\\tmessage`)
             """
         )
 
     # ---- ค่ามาตรฐาน ----
-    data_path       = "SMSSpamCollection.csv"
+    data_path       = SPAM_DATA_PATH
     test_size       = 0.2
     random_state    = 42
     vec_name        = "TfidfVectorizer"
@@ -499,7 +507,7 @@ def render_spam():
     max_features    = 5000
     stop_words      = "english"
 
-    go = st.button("🚀 Run report (ใช้ไฟล์จากเครื่องโดยอัตโนมัติ)", use_container_width=True)
+    go = st.button("🚀 Run report (ใช้ไฟล์จาก main/Bigdata/ โดยอัตโนมัติ)", use_container_width=True)
 
     # ---- Helpers ----
     def build_vectorizer():
@@ -508,7 +516,7 @@ def render_spam():
     def build_models():
         return {
             "LogisticRegression": LogisticRegression(max_iter=2000),
-            "LinearSVC": LinearSVC(dual=True),  # dual=True รองรับเวอร์ชันใหม่
+            "LinearSVC": LinearSVC(dual=True),
             "MultinomialNB": MultinomialNB(),
             "ComplementNB": ComplementNB(),
             "RandomForest": RandomForestClassifier(n_estimators=100, random_state=random_state, n_jobs=-1),
@@ -527,7 +535,6 @@ def render_spam():
                 auc = None
         return {"accuracy":acc,"precision":pre,"recall":rec,"f1":f1,"roc_auc":auc}
 
-    # --- วาดกราฟ: รองรับกรณีไม่ลง matplotlib ---
     def plot_cm(cm, labels=("ham(0)","spam(1)")):
         if not _HAS_MPL:
             return None
@@ -564,12 +571,12 @@ def render_spam():
         import pandas as pd
         st.header("1) Data preprocessing")
 
-        if not os.path.exists(data_path):
-            st.error(f"ไม่พบไฟล์: {data_path}. กรุณาวางไฟล์ข้อมูลในโฟลเดอร์เดียวกับสคริปต์")
+        if not data_path.exists():
+            st.error(f"ไม่พบไฟล์: {data_path}. กรุณาวางไฟล์ข้อมูลไว้ที่ main/Bigdata/")
             st.stop()
 
         try:
-            df = pd.read_csv(data_path, sep="\t", header=None, names=["label","message"], encoding="latin1")
+            df = pd.read_csv(str(data_path), sep="\t", header=None, names=["label","message"], encoding="latin1")
         except Exception as e:
             st.error(f"อ่านไฟล์ไม่สำเร็จ: {e}")
             st.stop()
@@ -596,10 +603,9 @@ def render_spam():
         # -------------------- Section: Model training & Comparison --------------------
         st.header("2) Model training & comparison")
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            df["message"].astype(str), df["label"].astype(int),
-            test_size=test_size, random_state=random_state, stratify=df["label"].astype(int)
-        )
+        X_train, X_test, y_train, y_test = \
+            train_test_split(df["message"].astype(str), df["label"].astype(int),
+                             test_size=test_size, random_state=random_state, stratify=df["label"].astype(int))
 
         vectorizer = build_vectorizer()
         models = build_models()
@@ -618,7 +624,6 @@ def render_spam():
                     scores = pipe.decision_function(X_test)
                     if np.ndim(scores) > 1:
                         scores = scores[:, 1]
-                    # Min-Max normalize to 0..1
                     denom = (scores.max() - scores.min()) + 1e-12
                     y_proba = (scores - scores.min()) / denom
 
@@ -686,13 +691,14 @@ def render_spam():
             st.markdown("#### 💾 บันทึกโมเดล/เวกเตอร์ (เพื่อใช้กับการทำนายข้อความเดี่ยว)")
             csm = st.columns(3)
             with csm[0]:
-                save_model_path = st.text_input("บันทึกโมเดลเป็น", value="spam_model.pkl", key="save_model")
+                save_model_path = st.text_input("บันทึกโมเดลเป็น", value=str(SPAM_MODEL_PATH), key="save_model")
             with csm[1]:
-                save_vec_path = st.text_input("บันทึกเวกเตอร์เป็น", value="vectorizer.pkl", key="save_vec")
+                save_vec_path = st.text_input("บันทึกเวกเตอร์เป็น", value=str(SPAM_VECT_PATH), key="save_vec")
             with csm[2]:
                 if st.button("บันทึก (joblib.dump)", use_container_width=True, key="save_button"):
                     best_model_to_save = best_pipe.named_steps["clf"]
-                    best_vec_to_save = best_pipe.named_steps["vec"]
+                    best_vec_to_save   = best_pipe.named_steps["vec"]
+                    import joblib
                     joblib.dump(best_model_to_save, save_model_path)
                     joblib.dump(best_vec_to_save, save_vec_path)
                     st.success(f"บันทึกแล้ว: {save_model_path}, {save_vec_path}")
@@ -707,7 +713,7 @@ def render_waste():
     st.markdown("<h2>🗑️ Waste Classification</h2><div class='subtle'>อัปโหลดภาพหรือถ่ายภาพจากกล้อง + ใช้โมเดล Keras (.keras/.h5)</div>", unsafe_allow_html=True)
 
     # ---- Settings ----
-    model_path = st.text_input("Path โมเดล (.keras หรือ .h5)", value="waste_model.keras")
+    model_path_str = st.text_input("Path โมเดล (.keras หรือ .h5)", value=str(WASTE_MODEL_DEFAULT))
     class_names_str = st.text_input("ชื่อคลาส (คั่นด้วยจุลภาค, ลำดับต้องตรงกับตอนเทรน)", value="organic,reuse")
     class_names = [c.strip() for c in class_names_str.split(",") if c.strip()]
 
@@ -725,10 +731,12 @@ def render_waste():
             uploaded_img = Image.open(cam_img).convert("RGB")
 
     if st.button("Predict", key="waste_predict_button"):
-        if not model_path:
+        if not model_path_str:
             st.warning("กรุณาระบุ path ของโมเดลก่อน")
             return
-        if not os.path.exists(model_path):
+
+        model_path = Path(model_path_str)
+        if not model_path.exists():
             st.error(f"ไม่พบไฟล์โมเดลที่: {model_path}")
             return
         if uploaded_img is None:
@@ -739,7 +747,7 @@ def render_waste():
             import tensorflow as tf
 
             with st.spinner("กำลังโหลดโมเดลและทำนายผล..."):
-                model = load_keras_model(model_path)
+                model = load_keras_model(str(model_path))
 
                 ishape = model.inputs[0].shape
                 H = int(ishape[1]) if ishape[1] is not None else 224
@@ -765,7 +773,12 @@ def render_waste():
                         import pandas as pd
                         names = class_names if (class_names and len(class_names) == len(pred)) else [f"Class_{i}" for i in range(len(pred))]
                         df_prob = pd.DataFrame({"class": names, "probability": pred})
-                        st.dataframe(df_prob.sort_values("probability", ascending=False).reset_index(drop=True).style.format({"probability": "{:.2%}"}), use_container_width=True)
+                        st.dataframe(
+                            df_prob.sort_values("probability", ascending=False)
+                                   .reset_index(drop=True)
+                                   .style.format({"probability": "{:.2%}"}),
+                            use_container_width=True
+                        )
                     except Exception:
                         st.write({f"Class {i}": p for i, p in enumerate(pred)})
 
@@ -789,16 +802,19 @@ def render_waste():
 
 # ================== ROUTING ==================
 if page == "profile":
-    # โหลดรูปโปรไฟล์ด้วย PIL ตามที่ขอ
+    # โหลดรูปโปรไฟล์ผ่านพาธ main/Bigdata/image/FUJI0041.jpg
     img_url = None
     try:
-        img = Image.open("image/FUJI0041.jpg").convert("RGB")
-        buf = BytesIO()
-        img.save(buf, format="JPEG", quality=90)
-        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-        img_url = f"data:image/jpeg;base64,{b64}"
+        if IMG_DEFAULT_PATH.exists():
+            img = Image.open(str(IMG_DEFAULT_PATH)).convert("RGB")
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=90)
+            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+            img_url = f"data:image/jpeg;base64,{b64}"
+        else:
+            st.caption(f"ไม่พบรูปโปรไฟล์เริ่มต้นที่ {IMG_DEFAULT_PATH}")
     except Exception as e:
-        st.caption(f"ไม่พบรูปโปรไฟล์เริ่มต้นที่ image/FUJI0041.jpg ({e})")
+        st.caption(f"โหลดรูปโปรไฟล์ล้มเหลว: {e}")
 
     show_profile(
         name="นาย ศิรวัช ปัญญาสวรรค์",
