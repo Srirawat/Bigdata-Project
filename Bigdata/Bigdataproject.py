@@ -1,3 +1,4 @@
+# Bigdataproject.py  —  Full dynamic-path version (no fixed prefix)
 import streamlit as st
 from bs4 import BeautifulSoup
 from urllib.parse import unquote
@@ -8,15 +9,7 @@ import tempfile
 import base64, zipfile, io, os, re, numpy as np
 
 # ================== CONFIG ==================
-st.set_page_config(page_title="Profile + Notion + Spam + Waste", layout="wide")
-
-# ---------- PATH PREFIX (บังคับให้เรียกผ่าน main/Bigdata/...) ----------
-PREFIX = Path("main/Bigdata").resolve()
-IMG_DEFAULT_PATH = PREFIX / "image" / "FUJI0041.jpg"
-SPAM_MODEL_PATH = PREFIX / "spam_model.pkl"
-SPAM_VECT_PATH  = PREFIX / "vectorizer.pkl"
-SPAM_DATA_PATH  = PREFIX / "SMSSpamCollection.csv"
-WASTE_MODEL_DEFAULT = PREFIX / "waste_model.keras"
+st.set_page_config(page_title="Profile + Notion + Spam + Waste (Smart Paths)", layout="wide")
 
 # ================== CSS ==================
 st.markdown(
@@ -43,26 +36,129 @@ if "page" not in st.session_state:
 def nav_click(target: str):
     st.session_state.page = target
 
-# ================== Generic Helpers ==================
+# ================== Smart path helpers ==================
+SCRIPT_DIR = Path(__file__).resolve().parent
+CWD = Path.cwd()
+
+COMMON_DIRS = [
+    SCRIPT_DIR,
+    CWD,
+    SCRIPT_DIR / "image",
+    SCRIPT_DIR / "images",
+    SCRIPT_DIR / "data",
+    SCRIPT_DIR / "models",
+    SCRIPT_DIR / "main" / "Bigdata",
+    SCRIPT_DIR.parent / "main" / "Bigdata",
+    CWD / "image",
+    CWD / "images",
+    CWD / "data",
+    CWD / "models",
+    CWD / "main" / "Bigdata",
+    CWD / "Bigdata",
+]
+
+def _within_project(p: Path) -> bool:
+    """ป้องกัน rglob โผล่ออกไปนอกโปรเจกต์: จำกัดไว้ใต้ SCRIPT_DIR.parent 1–2 ชั้น"""
+    try:
+        base = SCRIPT_DIR.parent
+        return base in p.resolve().parents or p.resolve() == base
+    except Exception:
+        return False
+
+def smart_find(
+    names=None,
+    exts=None,
+    extra_dirs=None,
+    allow_recursive=True,
+    limit_results=50
+) -> list[Path]:
+    """
+    ค้นหาไฟล์โดยฉลาด:
+      - ลองพาธตรงใน COMMON_DIRS + extra_dirs
+      - ถ้าไม่เจอ ลอง rglob แบบจำกัดขอบเขตโปรเจกต์
+    names: รายชื่อไฟล์ เช่น ["spam_model", "vectorizer"] หรือ ["FUJI0041"]
+    exts:  ส่วนขยายที่ยอมรับ เช่น [".pkl", ".keras", ".jpg", ".jpeg", ".png"] (ใส่จุดนำหน้า)
+    """
+    names = names or []
+    exts = exts or [""]
+    search_dirs = list(dict.fromkeys((COMMON_DIRS + (extra_dirs or []))))  # unique order
+
+    candidates = []
+    # 1) ชนตรงแบบ dir/name.ext
+    for d in search_dirs:
+        for n in names:
+            for e in exts:
+                p = d / f"{n}{e}"
+                if p.exists() and p.is_file():
+                    candidates.append(p)
+
+    if candidates:
+        # unique (preserve order)
+        seen, uniq = set(), []
+        for p in candidates:
+            if str(p) not in seen:
+                uniq.append(p)
+                seen.add(str(p))
+        return uniq[:limit_results]
+
+    # 2) ถ้าไม่เจอ — ลอง rglob (เฉพาะใต้โฟลเดอร์โปรเจกต์เพื่อความเร็ว)
+    if allow_recursive:
+        roots = [SCRIPT_DIR, SCRIPT_DIR.parent, CWD]
+        seen, found = set(), []
+        for root in roots:
+            try:
+                if not root.exists() or not root.is_dir():
+                    continue
+                for n in names:
+                    # pattern: name.* (แล้วไปกรอง exts อีกที)
+                    for p in root.rglob(f"{n}*"):
+                        if p.is_file():
+                            if exts == [""] or p.suffix.lower() in exts:
+                                if _within_project(p) and str(p) not in seen:
+                                    found.append(p)
+                                    seen.add(str(p))
+                                    if len(found) >= limit_results:
+                                        return found
+            except Exception:
+                pass
+        return found
+
+    return []
+
+def show_found_paths(label: str, paths: list[Path]):
+    if not paths:
+        st.caption(f"🔎 {label}: ไม่พบไฟล์ที่เข้าข่าย")
+        return
+    st.caption(f"🔎 {label}: พบ {len(paths)} ไฟล์ (แสดงสูงสุด 5 รายการ)")
+    for p in paths[:5]:
+        st.caption(f" • {p}")
+
+def save_uploaded_file(target_path: Path, uploaded_file) -> bool:
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(target_path, "wb") as f:
+            f.write(uploaded_file.read())
+        return True
+    except Exception as e:
+        st.error(f"บันทึกไฟล์ล้มเหลว: {e}")
+        return False
+
+# ================== Generic UI Helpers ==================
 def _img(img, caption=None):
     try:
         st.image(img, caption=caption, use_container_width=True)
     except TypeError:
         st.image(img, caption=caption, use_column_width=True)
 
-def image_to_base64(path: Path):
+def b64_from_image_path(path: Path) -> str | None:
     try:
-        with open(path, "rb") as f:
-            data = base64.b64encode(f.read()).decode("utf-8")
-            return f"data:image/jpeg;base64,{data}"
+        img = Image.open(path).convert("RGB")
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        return f"data:image/jpeg;base64,{b64}"
     except Exception:
         return None
-
-def first_existing_path(paths):
-    for p in paths:
-        if p and Path(p).exists():
-            return p
-    return None
 
 # ===== Notion helpers (inline asset) =====
 def data_uri_from_file(path: Path):
@@ -444,28 +540,61 @@ def render_spam():
 
     st.markdown("<h2>📧 SMS/Email Spam</h2><div class='subtle'>ทดสอบข้อความว่าเป็น Ham หรือ Spam</div>", unsafe_allow_html=True)
 
-    # ---- Model files status ----
-    have_files = SPAM_MODEL_PATH.exists() and SPAM_VECT_PATH.exists()
-    if not have_files:
-        st.warning(
-            "ยังไม่พบไฟล์โมเดลที่ตำแหน่งต่อไปนี้:\n"
-            f"- {SPAM_MODEL_PATH}\n- {SPAM_VECT_PATH}\n\n"
-            "ให้วางไฟล์ด้วย Git ตามวิธี C ที่คุณเลือก แล้วกด Restart แอปครับ 🙂"
-        )
+    # ---------- ค้นหาไฟล์อัตโนมัติ ----------
+    found_model = smart_find(names=["spam_model"], exts=[".pkl"])
+    found_vec   = smart_find(names=["vectorizer"], exts=[".pkl"])
+    found_data  = smart_find(names=["SMSSpamCollection"], exts=[".csv", ".tsv", ".txt"])
 
-    # ---- ทำนายข้อความเดี่ยว (ซ่อนจนกว่าจะมีไฟล์) ----
+    show_found_paths("Spam model", found_model)
+    show_found_paths("Spam vectorizer", found_vec)
+    show_found_paths("Spam dataset", found_data)
+
+    model_path = st.selectbox(
+        "เลือกไฟล์โมเดล (หรือปล่อยว่างถ้ายังไม่มี)",
+        options=["(ไม่เลือก)"] + [str(p) for p in found_model],
+        index=0
+    )
+    vec_path = st.selectbox(
+        "เลือกไฟล์เวกเตอร์ (หรือปล่อยว่างถ้ายังไม่มี)",
+        options=["(ไม่เลือก)"] + [str(p) for p in found_vec],
+        index=0
+    )
+    data_path = st.selectbox(
+        "เลือกไฟล์ข้อมูล (SMSSpamCollection) สำหรับเทรน/รีพอร์ต",
+        options=["(ไม่เลือก)"] + [str(p) for p in found_data],
+        index=0
+    )
+
+    # อัปโหลดแทนได้
+    with st.expander("⬆️ อัปโหลดไฟล์ (.pkl/.csv/.tsv/.txt) เพิ่มเติม", expanded=False):
+        upl_model = st.file_uploader("โมเดล (spam_model.pkl)", type=["pkl"], key="upl_m")
+        upl_vec   = st.file_uploader("เวกเตอร์ (vectorizer.pkl)", type=["pkl"], key="upl_v")
+        upl_data  = st.file_uploader("ดาต้า (SMSSpamCollection)", type=["csv","tsv","txt"], key="upl_d")
+        save_dir = st.text_input("บันทึกลงโฟลเดอร์", value=str((SCRIPT_DIR / "uploaded").resolve()))
+        if st.button("บันทึกไฟล์ที่อัปโหลด"):
+            ok = True
+            if upl_model is not None: ok &= save_uploaded_file(Path(save_dir) / "spam_model.pkl", upl_model)
+            if upl_vec   is not None: ok &= save_uploaded_file(Path(save_dir) / "vectorizer.pkl", upl_vec)
+            if upl_data  is not None:
+                ext = Path(upl_data.name).suffix.lower() or ".csv"
+                ok &= save_uploaded_file(Path(save_dir) / f"SMSSpamCollection{ext}", upl_data)
+            if ok:
+                st.success("บันทึกไฟล์เรียบร้อย • โปรดเลือกไฟล์จากรายการด้านบน (อาจกด Rerun)")
+
+    have_files = (model_path != "(ไม่เลือก)" and vec_path != "(ไม่เลือก)")
+
+    # ---- ทำนายข้อความเดี่ยว (แสดงเมื่อมีไฟล์โมเดล+เวกเตอร์) ----
     if have_files:
         with st.container():
             st.markdown("### 🔎 ทำนายข้อความเดี่ยว")
             txt = st.text_area("ใส่ข้อความที่ต้องการทำนาย", height=100, placeholder="เช่น: Win a FREE iPhone now! Click link…")
-
             if st.button("ทำนาย", use_container_width=True):
                 if not txt.strip():
                     st.warning("กรุณาใส่ข้อความก่อนทำนาย")
                 else:
                     try:
-                        model = joblib.load(str(SPAM_MODEL_PATH))
-                        vectorizer = joblib.load(str(SPAM_VECT_PATH))
+                        model = joblib.load(model_path)
+                        vectorizer = joblib.load(vec_path)
                         X = vectorizer.transform([txt])
                         if hasattr(model, "predict_proba"):
                             p = model.predict_proba(X)[0]
@@ -481,8 +610,9 @@ def render_spam():
                             st.success(f"ผลทำนาย: **{pred_label}**")
                     except Exception as e:
                         st.error(f"เกิดข้อผิดพลาด: {e}")
-
         st.markdown("---")
+    else:
+        st.info("ยังไม่เลือกโมเดลและเวกเตอร์ • เลือกจากรายการด้านบนหรืออัปโหลด/เทรนก่อน")
 
     # ---- Business & Dataset ----
     with st.expander("💼 Business Value & Use Cases", expanded=True):
@@ -494,15 +624,13 @@ def render_spam():
         )
     with st.expander("📚 แหล่งข้อมูล (Dataset)", expanded=True):
         st.markdown(
-            f"""
+            """
 - **ชุดข้อมูล:** *SMS Spam Collection* (ป้ายกำกับ `ham`/`spam`)
-- **ไฟล์ที่ใช้:** `{SPAM_DATA_PATH}`
-- **ที่มา (UCI ML Repository):** https://archive.ics.uci.edu/ml/datasets/sms+spam+collection
+- **ไฟล์:** `SMSSpamCollection.(csv/tsv/txt)` — โค้ดจะค้นหาเองอัตโนมัติในโปรเจกต์
             """
         )
 
-    # ---- ค่ามาตรฐาน ----
-    data_path       = SPAM_DATA_PATH
+    # ---- ค่า/ตัวเลือก ----
     test_size       = 0.2
     random_state    = 42
     vec_name        = "TfidfVectorizer"
@@ -510,13 +638,17 @@ def render_spam():
     max_features    = 5000
     stop_words      = "english"
 
-    go = st.button("🚀 Run report (ใช้ไฟล์จาก main/Bigdata/ โดยอัตโนมัติ)", use_container_width=True)
-
     # ---- Helpers ----
+    from sklearn.metrics import roc_auc_score, roc_curve
     def build_vectorizer():
+        from sklearn.feature_extraction.text import TfidfVectorizer
         return TfidfVectorizer(lowercase=True, stop_words=stop_words, ngram_range=(1,2), max_features=max_features)
 
     def build_models():
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.svm import LinearSVC
+        from sklearn.naive_bayes import MultinomialNB, ComplementNB
+        from sklearn.ensemble import RandomForestClassifier
         return {
             "LogisticRegression": LogisticRegression(max_iter=2000),
             "LinearSVC": LinearSVC(dual=True),
@@ -526,6 +658,7 @@ def render_spam():
         }
 
     def compute_metrics(y_true, y_pred, y_prob=None):
+        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
         acc = accuracy_score(y_true, y_pred)
         pre = precision_score(y_true, y_pred, pos_label=1, zero_division=0)
         rec = recall_score(y_true, y_pred, pos_label=1, zero_division=0)
@@ -541,6 +674,7 @@ def render_spam():
     def plot_cm(cm, labels=("ham(0)","spam(1)")):
         if not _HAS_MPL:
             return None
+        import matplotlib.pyplot as plt
         fig, ax = plt.subplots(figsize=(4, 3))
         ax.imshow(cm, interpolation="nearest", cmap=plt.cm.Blues)
         ax.set_xticks([0,1]); ax.set_xticklabels(labels, rotation=0)
@@ -557,6 +691,7 @@ def render_spam():
     def plot_roc(y_true, y_prob):
         if not _HAS_MPL:
             return None, None
+        import matplotlib.pyplot as plt
         fpr, tpr, _ = roc_curve(y_true, y_prob)
         auc_val = roc_auc_score(y_true, y_prob)
         fig, ax = plt.subplots(figsize=(4, 3))
@@ -570,16 +705,20 @@ def render_spam():
         return fig, auc_val
 
     # -------------------- Section: Data preprocessing --------------------
+    go = st.button("🚀 Run report (ค้นหาไฟล์ข้อมูลอัตโนมัติ)")
     if go:
-        import pandas as pd
         st.header("1) Data preprocessing")
 
-        if not data_path.exists():
-            st.error(f"ไม่พบไฟล์: {data_path}. กรุณาวางไฟล์ข้อมูลไว้ที่ main/Bigdata/")
+        if data_path == "(ไม่เลือก)":
+            st.error("ยังไม่เลือกไฟล์ข้อมูล (SMSSpamCollection) • เลือกจากรายการด้านบนหรืออัปโหลด")
             st.stop()
 
         try:
-            df = pd.read_csv(str(data_path), sep="\t", header=None, names=["label","message"], encoding="latin1")
+            # เดา delimiter อัตโนมัติจากนามสกุล
+            ext = Path(data_path).suffix.lower()
+            sep = "\t" if ext in [".tsv", ".txt"] else ","
+            import pandas as pd
+            df = pd.read_csv(data_path, sep=sep, header=None, names=["label","message"], encoding="latin1")
         except Exception as e:
             st.error(f"อ่านไฟล์ไม่สำเร็จ: {e}")
             st.stop()
@@ -605,10 +744,10 @@ def render_spam():
 
         # -------------------- Section: Model training & Comparison --------------------
         st.header("2) Model training & comparison")
-
+        from sklearn.model_selection import train_test_split
         X_train, X_test, y_train, y_test = \
             train_test_split(df["message"].astype(str), df["label"].astype(int),
-                             test_size=test_size, random_state=random_state, stratify=df["label"].astype(int))
+                             test_size=0.2, random_state=42, stratify=df["label"].astype(int))
 
         vectorizer = build_vectorizer()
         models = build_models()
@@ -651,6 +790,7 @@ def render_spam():
 
         # -------------------- Section: Evaluation --------------------
         st.header("3) Evaluation (ของโมเดลที่ชนะ)")
+        from sklearn.metrics import confusion_matrix
         cm = confusion_matrix(y_test, best_pred, labels=[0,1])
         cm_fig = plot_cm(cm)
 
@@ -673,23 +813,21 @@ def render_spam():
                 st.info("โมเดลนี้ไม่มี probability/score จึงคำนวณ ROC-AUC ไม่ได้")
 
         st.write("**Classification report:**")
+        from sklearn.metrics import classification_report
         st.code(classification_report(y_test, best_pred, target_names=["ham(0)","spam(1)"], zero_division=0))
 
-        # -------------------- Section: สรุปผลลัพธ์และข้อเสนอแนะ --------------------
-        st.header("4) สรุปผลลัพธ์และข้อเสนอแนะ")
+        st.header("4) สรุปผลลัพธ์และคำแนะนำ")
         best_row = res_df.iloc[0].to_dict()
         st.markdown(f"""
 - **โมเดลที่ดีที่สุด**: `{best_name}`
 - **ผลลัพธ์เด่น**: Accuracy={best_row['Accuracy']:.3f}, Precision={best_row['Precision']:.3f}, Recall={best_row['Recall']:.3f}, F1={best_row['F1']:.3f}{", ROC-AUC="+str(round(best_row['ROC-AUC'],3)) if pd.notnull(best_row['ROC-AUC']) else ""}
 
-**ข้อสังเกต & คำแนะนำ**
-- ถ้าต้องการ “กันสแปมหลุด” (ลด False Negative) ให้เน้นค่า **Recall ของ Spam** → อาจต้องยอมรับ Precision ที่ลดลงเล็กน้อย
-- เพิ่ม **ฟีเจอร์ใหม่ๆ (Feature Engineering)**: เช่น ความยาวข้อความ, จำนวน URL/ตัวเลข/สัญลักษณ์พิเศษ, การใช้คำที่เป็นตัวพิมพ์ใหญ่ล้วน
-- ทดลอง **Hyperparameter Tuning** สำหรับโมเดลที่ดีที่สุดเพื่อเพิ่มประสิทธิภาพ
-- ในงานจริง ควรมีการ **ติดตามผล (Monitoring)** ของโมเดล และ **เทรนใหม่ (Retraining)** เป็นระยะเมื่อข้อมูลมีการเปลี่ยนแปลง
+**คำแนะนำ**
+- ถ้าต้องการลด False Negative (กันสแปมหลุด) ให้เน้น Recall ของคลาสสแปม
+- เพิ่มฟีเจอร์ (เช่น ความยาวข้อความ, จำนวน URL/ตัวเลข/สัญลักษณ์พิเศษ)
+- ทำ Hyperparameter Tuning กับโมเดลที่ชนะ
+- มี Monitoring/Periodic Retraining เมื่อดาต้าเปลี่ยน
         """)
-
-        # (ไม่บันทึกอัตโนมัติ เพราะคุณเลือกวิธี C แล้ว)
 
 # ================== PAGE 4: Waste (Keras .keras, auto input size + CAMERA) ==================
 @st.cache_resource
@@ -700,8 +838,24 @@ def load_keras_model(path: str):
 def render_waste():
     st.markdown("<h2>🗑️ Waste Classification</h2><div class='subtle'>อัปโหลดภาพหรือถ่ายภาพจากกล้อง + ใช้โมเดล Keras (.keras/.h5)</div>", unsafe_allow_html=True)
 
-    # ---- Settings ----
-    model_path_str = st.text_input("Path โมเดล (.keras หรือ .h5)", value=str(WASTE_MODEL_DEFAULT))
+    # ค้นหาโมเดลอัตโนมัติ (.keras/.h5) โดยชื่อยอดฮิต
+    found_models = []
+    for name in ["waste_model", "model", "waste"]:
+        found_models += smart_find(names=[name], exts=[".keras", ".h5"])
+    # unique
+    seen, uniq = set(), []
+    for p in found_models:
+        if str(p) not in seen:
+            uniq.append(p)
+            seen.add(str(p))
+    show_found_paths("Keras models", uniq)
+
+    model_path_str = st.selectbox(
+        "เลือกไฟล์โมเดล (.keras/.h5)",
+        options=["(ยังไม่เลือก)"] + [str(p) for p in uniq],
+        index=0
+    )
+
     class_names_str = st.text_input("ชื่อคลาส (คั่นด้วยจุลภาค, ลำดับต้องตรงกับตอนเทรน)", value="organic,reuse")
     class_names = [c.strip() for c in class_names_str.split(",") if c.strip()]
 
@@ -719,10 +873,9 @@ def render_waste():
             uploaded_img = Image.open(cam_img).convert("RGB")
 
     if st.button("Predict", key="waste_predict_button"):
-        if not model_path_str:
-            st.warning("กรุณาระบุ path ของโมเดลก่อน")
+        if model_path_str == "(ยังไม่เลือก)":
+            st.warning("กรุณาเลือกโมเดลก่อน")
             return
-
         model_path = Path(model_path_str)
         if not model_path.exists():
             st.error(f"ไม่พบไฟล์โมเดลที่: {model_path}")
@@ -733,7 +886,6 @@ def render_waste():
 
         try:
             import tensorflow as tf
-
             with st.spinner("กำลังโหลดโมเดลและทำนายผล..."):
                 model = load_keras_model(str(model_path))
 
@@ -773,36 +925,29 @@ def render_waste():
         except Exception as e:
             st.error(f"เกิดข้อผิดพลาด: {e}")
 
-    # ---- Practical Summary ----
-    st.markdown("---")
-    st.subheader("📌 สรุปการประยุกต์ใช้งานจริง & ประโยชน์")
-    st.markdown(
-        """
-- **คัดแยกขยะอัจฉริยะ (Smart Bins / MRF):** ติดกล้องที่ถังขยะหรือสายพานลำเลียงให้ระบบจำแนกประเภทอัตโนมัติ ลดภาระคนงาน และเพิ่มความแม่นยำการรีไซเคิล
-- **IoT + กล้อง ณ จุดทิ้งขยะ:** แจ้งเตือนเมื่อพบการทิ้งผิดประเภท (เช่น ขยะอันตรายปะปน) หรือคัดแยกเบื้องต้นก่อนเข้าระบบหลัก
-- **งานเทศบาล/มหาวิทยาลัย/ห้างฯ:** สื่อสาร “ทิ้งให้ถูกที่” แบบเรียลไทม์ผ่านจอ/แอป ช่วยปรับพฤติกรรมประชาชนและเพิ่มอัตรารีไซเคิล
-- **ธุรกิจรีไซเคิล/โลจิสติกส์:** ตรวจคุณภาพวัสดุเข้าโรงรีไซเคิล ออกใบรับรองหรือคำนวณมูลค่าจากประเภทวัสดุได้รวดเร็ว
-- **ประโยชน์ทางเศรษฐกิจ & สิ่งแวดล้อม:** ลดต้นทุนแรงงานและความผิดพลาด เพิ่มอัตรารีไซเคิล ลดของเสียฝังกลบและการปล่อยก๊าซเรือนกระจก
-- **ต่อยอดโมเดล:** เก็บภาพจริงหน้างานมาปรับปรุงชุดข้อมูล, ทำ active learning, เพิ่มคลาส/ย่อยคลาส (เช่น พลาสติกใส/ทึบ), และติดตามผลแบบ dashboard
-        """
-    )
     st.info("หมายเหตุ: การถ่ายด้วยกล้องผ่านเบราว์เซอร์ต้องอยู่บน HTTPS หรือ localhost และอนุญาตสิทธิ์การใช้กล้อง")
 
-# ================== ROUTING ==================
-if page == "profile":
-    # โหลดรูปโปรไฟล์ผ่านพาธ main/Bigdata/image/FUJI0041.jpg
+# ================== PAGE 1 RENDERER ==================
+def render_profile_page():
+    # หาไฟล์รูปโปรไฟล์ FUJI0041.(jpg/jpeg/png) อัตโนมัติ
+    found_img = []
+    for nm in ["FUJI0041", "profile", "avatar", "me"]:
+        found_img += smart_find(names=[nm], exts=[".jpg", ".jpeg", ".png"])
+    # unique
+    seen, uniq = set(), []
+    for p in found_img:
+        if str(p) not in seen:
+            uniq.append(p); seen.add(str(p))
+
+    show_found_paths("Profile image candidates", uniq)
+
+    # default: ใช้ไฟล์แรกที่พบ
     img_url = None
-    try:
-        if IMG_DEFAULT_PATH.exists():
-            img = Image.open(str(IMG_DEFAULT_PATH)).convert("RGB")
-            buf = BytesIO()
-            img.save(buf, format="JPEG", quality=90)
-            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-            img_url = f"data:image/jpeg;base64,{b64}"
-        else:
-            st.caption(f"ไม่พบรูปโปรไฟล์เริ่มต้นที่ {IMG_DEFAULT_PATH}")
-    except Exception as e:
-        st.caption(f"โหลดรูปโปรไฟล์ล้มเหลว: {e}")
+    if uniq:
+        img_url = b64_from_image_path(uniq[0])
+        st.caption(f"ใช้รูป: {uniq[0]}")
+    else:
+        st.caption("ไม่พบรูปโปรไฟล์อัตโนมัติ • สามารถอัปโหลด/ใส่ลิงก์ได้ในหน้า")
 
     show_profile(
         name="นาย ศิรวัช ปัญญาสวรรค์",
@@ -816,9 +961,17 @@ if page == "profile":
         skills=["🐍 Python", "⚙️ SQL", "☁️ Streamlit", "🗄️ BigQuery", "✅ Excel", "📊 HTML"],
         img_url=img_url
     )
-elif page == "notion":
+
+# ================== ROUTING ==================
+with st.sidebar:
+    st.caption(f"📂 cwd = {CWD}")
+    st.caption(f"📄 script_dir = {SCRIPT_DIR}")
+
+if st.session_state.page == "profile":
+    render_profile_page()
+elif st.session_state.page == "notion":
     render_notion()
-elif page == "spam":
+elif st.session_state.page == "spam":
     render_spam()
-elif page == "waste":
+elif st.session_state.page == "waste":
     render_waste()
