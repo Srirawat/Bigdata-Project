@@ -24,6 +24,20 @@ st.markdown(
     .card{background:#fff;border:1px solid #eaeaea;border-radius:16px;
           box-shadow:0 4px 14px rgba(0,0,0,0.08);padding:22px;margin-bottom:18px;}
     .subtle{color:#607d8b;font-size:13px;margin-top:-4px;}
+
+    /* NEW CSS for profile image styling */
+    .profile-img-container {
+        display: flex;
+        justify-content: center; /* Center horizontally */
+        align-items: center;     /* Center vertically */
+        height: 100%;            /* Take full height of its column */
+    }
+    .profile-img {
+        border-radius: 50%; /* Make it circular */
+        object-fit: cover;  /* Ensure image covers the area without distortion */
+        border: 4px solid var(--brand); /* Add a border matching brand color */
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2); /* Add a subtle shadow */
+    }
     </style>
     """,
     unsafe_allow_html=True
@@ -147,20 +161,26 @@ page = st.session_state.page
 def show_profile(name, student_id, major, interest, experience, skills, profile_image=None):
     st.title("👤 Profile Page")
     
-    # --- NEW: Refactored Profile Header using st.columns and st.image ---
-    col1, col2 = st.columns([1, 4])
+    col1, col2 = st.columns([1, 4]) # Adjust column ratio as needed
     with col1:
+        st.markdown('<div class="profile-img-container">', unsafe_allow_html=True)
         if profile_image:
-            st.image(profile_image, width=120)
+            # Use st.image with class for styling
+            st.image(profile_image, width=150, clamp=True, output_format="JPEG", # Adjust width as needed
+                     caption="Profile Picture",
+                     use_column_width="auto", # Let Streamlit handle column width
+                     # This CSS class is critical for styling the image within Streamlit's div
+                     ) 
+            st.markdown('<style>img {border-radius: 50%; border: 4px solid #4CAF50; box-shadow: 0 4px 8px rgba(0,0,0,0.2); object-fit: cover;} </style>', unsafe_allow_html=True)
         else:
             st.warning("ไม่พบรูปภาพ")
+        st.markdown('</div>', unsafe_allow_html=True) # Close the container div
 
     with col2:
         st.title(name)
         st.markdown(f"**รหัสนักศึกษา:** {student_id}")
         st.markdown(f"**สาขา:** {major}")
     
-    # --- Rest of the profile page remains the same ---
     with st.container():
         st.subheader("💡 ความสนใจด้าน Data Science / Data Mining")
         st.info(interest)
@@ -761,12 +781,23 @@ def render_waste():
 
 # ================== ROUTING ==================
 if page == "profile":
-    # --- NEW: Load image directly from the specified path ---
+    # --- Load image directly from the specified path ---
+    image_path = "image/FUJI0041.jpg" # Make sure this path is correct
     profile_image = None
-    image_path = "image/FUJI0041.jpg"
+    
+    # Optional: Keep debugging info for a while if you still have issues
+    # st.subheader("🕵️‍♂️ Debugging Information (ลบออกได้ทีหลัง)")
+    # st.write(f"**Current Directory:** `{os.getcwd()}`")
+    # st.write(f"**Attempting to open:** `{os.path.abspath(image_path)}`")
+    # file_exists = os.path.exists(image_path)
+    # st.write(f"**Does the file exist at this path?** `{file_exists}`")
+    # st.markdown("---")
+
     try:
         if os.path.exists(image_path):
             profile_image = Image.open(image_path)
+        else:
+            st.warning(f"ไม่พบไฟล์รูปภาพที่ '{image_path}'. กรุณาตรวจสอบโครงสร้างโฟลเดอร์และการสะกดชื่อไฟล์")
     except Exception as e:
         st.error(f"ไม่สามารถโหลดรูปภาพได้: {e}")
 
@@ -776,7 +807,7 @@ if page == "profile":
         major="Information Technology",
         interest="ผมสนใจด้าน Data Science เพราะมองว่า “ข้อมูล” สามารถบอกเล่าเรื่องราวและช่วยให้ตัดสินใจได้อย่างมีเหตุผล โดยเฉพาะการหาความสัมพันธ์หรือรูปแบบที่ซ่อนอยู่ในข้อมูล ซึ่งเป็นส่วนที่ท้าทายและสนุกมาก",
         experience="- 📌Mini Project วิชา ITE-436: Big Data & Data Mining — ทำโปรเจ็กต์ Spam Email Classification ด้วย SMSSpamCollection Dataset\n"
-                   "- ☁️ โปรเจ็กต์วิเคราะห์ข้อมูล YouTube ศึกษาความสัมพันธ์ระหว่างความยาววิดีโอและยอดวิวโดยใช้ Pandas และ Seaborn\n"
+                   "- ☁️ โปรเจ็กต์วิเคราะห์ข้อมูล YouTube ศึกษาความสัมพันธ์ระหว่างความยาววิดีโอและยอดวิวโดยใช้ Pandas และ seaborn\n"
                    " - 🧑‍💼Staff Event Maruya,Cosnatsu,TIGS,TGS\n"
                    " - 📸 ตากล้อง ถ่ายภาพในมหาวิทยาลัย,งานReshTech&ตั้งตัว",
         skills=["🐍 Python", "⚙️ SQL", "☁️ Streamlit", "🗄️ BigQuery", "✅ Excel", "📊 HTML"],
