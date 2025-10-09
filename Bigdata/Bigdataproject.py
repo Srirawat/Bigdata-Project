@@ -444,8 +444,8 @@ def render_spam():
         st.markdown("### 🔎 ทำนายข้อความเดี่ยว")
         txt = st.text_area("ใส่ข้อความที่ต้องการทำนาย", height=100, placeholder="เช่น: Win a FREE iPhone now! Click link…")
 
-        model_path = "spam_model.pkl"
-        vec_path = "vectorizer.pkl"
+        model_path = r"Bigdata/spam_model.pkl"
+        vec_path = r"Bigdata/vectorizer.pkl"
 
         if st.button("ทำนาย", use_container_width=True):
             if not txt.strip():
