@@ -1,4 +1,4 @@
-# Bigdataproject.py  —  Full dynamic-path version (no fixed prefix)
+# main/Bigdata/Bigdataproject.py
 import streamlit as st
 from bs4 import BeautifulSoup
 from urllib.parse import unquote
@@ -7,9 +7,18 @@ from PIL import Image
 from io import BytesIO
 import tempfile
 import base64, zipfile, io, os, re, numpy as np
+import csv
 
 # ================== CONFIG ==================
-st.set_page_config(page_title="Profile + Notion + Spam + Waste (Smart Paths)", layout="wide")
+st.set_page_config(page_title="Profile + Notion + Spam + Waste", layout="wide")
+
+# ---------- FIXED PATHS ----------
+ROOT = Path("main/Bigdata").resolve()
+IMG_PROFILE_PATH = ROOT / "image" / "FUJI0041.jpg"
+SPAM_MODEL_PATH = ROOT / "spam_model.pkl"
+SPAM_VECT_PATH = ROOT / "vectorizer.pkl"
+SPAM_DATA_PATH = ROOT / "SMSSpamCollection.csv"
+WASTE_MODEL_PATH = ROOT / "waste_model.keras"
 
 # ================== CSS ==================
 st.markdown(
@@ -36,204 +45,12 @@ if "page" not in st.session_state:
 def nav_click(target: str):
     st.session_state.page = target
 
-# ================== Smart path helpers ==================
-SCRIPT_DIR = Path(__file__).resolve().parent
-CWD = Path.cwd()
-
-COMMON_DIRS = [
-    SCRIPT_DIR,
-    CWD,
-    SCRIPT_DIR / "image",
-    SCRIPT_DIR / "images",
-    SCRIPT_DIR / "data",
-    SCRIPT_DIR / "models",
-    SCRIPT_DIR / "main" / "Bigdata",
-    SCRIPT_DIR.parent / "main" / "Bigdata",
-    CWD / "image",
-    CWD / "images",
-    CWD / "data",
-    CWD / "models",
-    CWD / "main" / "Bigdata",
-    CWD / "Bigdata",
-]
-
-def _within_project(p: Path) -> bool:
-    """ป้องกัน rglob โผล่ออกไปนอกโปรเจกต์: จำกัดไว้ใต้ SCRIPT_DIR.parent 1–2 ชั้น"""
-    try:
-        base = SCRIPT_DIR.parent
-        return base in p.resolve().parents or p.resolve() == base
-    except Exception:
-        return False
-
-def smart_find(
-    names=None,
-    exts=None,
-    extra_dirs=None,
-    allow_recursive=True,
-    limit_results=50
-) -> list[Path]:
-    """
-    ค้นหาไฟล์โดยฉลาด:
-      - ลองพาธตรงใน COMMON_DIRS + extra_dirs
-      - ถ้าไม่เจอ ลอง rglob แบบจำกัดขอบเขตโปรเจกต์
-    names: รายชื่อไฟล์ เช่น ["spam_model", "vectorizer"] หรือ ["FUJI0041"]
-    exts:  ส่วนขยายที่ยอมรับ เช่น [".pkl", ".keras", ".jpg", ".jpeg", ".png"] (ใส่จุดนำหน้า)
-    """
-    names = names or []
-    exts = exts or [""]
-    search_dirs = list(dict.fromkeys((COMMON_DIRS + (extra_dirs or []))))  # unique order
-
-    candidates = []
-    # 1) ชนตรงแบบ dir/name.ext
-    for d in search_dirs:
-        for n in names:
-            for e in exts:
-                p = d / f"{n}{e}"
-                if p.exists() and p.is_file():
-                    candidates.append(p)
-
-    if candidates:
-        # unique (preserve order)
-        seen, uniq = set(), []
-        for p in candidates:
-            if str(p) not in seen:
-                uniq.append(p)
-                seen.add(str(p))
-        return uniq[:limit_results]
-
-    # 2) ถ้าไม่เจอ — ลอง rglob (เฉพาะใต้โฟลเดอร์โปรเจกต์เพื่อความเร็ว)
-    if allow_recursive:
-        roots = [SCRIPT_DIR, SCRIPT_DIR.parent, CWD]
-        seen, found = set(), []
-        for root in roots:
-            try:
-                if not root.exists() or not root.is_dir():
-                    continue
-                for n in names:
-                    # pattern: name.* (แล้วไปกรอง exts อีกที)
-                    for p in root.rglob(f"{n}*"):
-                        if p.is_file():
-                            if exts == [""] or p.suffix.lower() in exts:
-                                if _within_project(p) and str(p) not in seen:
-                                    found.append(p)
-                                    seen.add(str(p))
-                                    if len(found) >= limit_results:
-                                        return found
-            except Exception:
-                pass
-        return found
-
-    return []
-
-def show_found_paths(label: str, paths: list[Path]):
-    if not paths:
-        st.caption(f"🔎 {label}: ไม่พบไฟล์ที่เข้าข่าย")
-        return
-    st.caption(f"🔎 {label}: พบ {len(paths)} ไฟล์ (แสดงสูงสุด 5 รายการ)")
-    for p in paths[:5]:
-        st.caption(f" • {p}")
-
-def save_uploaded_file(target_path: Path, uploaded_file) -> bool:
-    try:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(target_path, "wb") as f:
-            f.write(uploaded_file.read())
-        return True
-    except Exception as e:
-        st.error(f"บันทึกไฟล์ล้มเหลว: {e}")
-        return False
-
-# ================== Generic UI Helpers ==================
+# ================== Helper ==================
 def _img(img, caption=None):
     try:
         st.image(img, caption=caption, use_container_width=True)
     except TypeError:
         st.image(img, caption=caption, use_column_width=True)
-
-def b64_from_image_path(path: Path) -> str | None:
-    try:
-        img = Image.open(path).convert("RGB")
-        buf = BytesIO()
-        img.save(buf, format="JPEG", quality=90)
-        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-        return f"data:image/jpeg;base64,{b64}"
-    except Exception:
-        return None
-
-# ===== Notion helpers (inline asset) =====
-def data_uri_from_file(path: Path):
-    try:
-        mime = "image/png"
-        if path.suffix.lower() in [".jpg", ".jpeg"]: mime = "image/jpeg"
-        elif path.suffix.lower() == ".gif": mime = "image/gif"
-        elif path.suffix.lower() == ".svg": mime = "image/svg+xml"
-        with open(path, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode("utf-8")
-        return f"data:{mime};base64,{b64}"
-    except Exception:
-        return None
-
-def _resolve_local_path(base_dir: Path, url: str):
-    if not url or url.startswith(("http://", "https://", "data:")):
-        return None
-    url = url.split("?")[0].split("#")[0]
-    url = unquote(url)
-    candidate = (base_dir / url).resolve()
-    if candidate.exists():
-        return candidate
-    try:
-        candidate = (base_dir / Path(url)).resolve()
-        if candidate.exists():
-            return candidate
-    except Exception:
-        pass
-    return None
-
-def _inline_css_urls(css_text: str, base_dir: Path) -> str:
-    def repl(m):
-        raw = m.group(1).strip().strip('"').strip("'")
-        p = _resolve_local_path(base_dir, raw)
-        if p:
-            uri = data_uri_from_file(p)
-            if uri:
-                return f"url('{uri}')"
-        return f"url('{raw}')"
-    return re.sub(r"url\((.*?)\)", repl, css_text, flags=re.IGNORECASE)
-
-def inline_assets(html_text: str, base_dir: Path):
-    soup = BeautifulSoup(html_text, "html.parser")
-    # inline images
-    for img in soup.find_all("img"):
-        if not img.get("src"):
-            for k in ("data-src","data-original","data-lazy-src"):
-                if img.get(k): img["src"] = img.get(k); break
-        src = img.get("src")
-        p = _resolve_local_path(base_dir, src)
-        if p:
-            uri = data_uri_from_file(p)
-            if uri: img["src"] = uri
-    # inline CSS files
-    for link in soup.find_all("link", rel="stylesheet"):
-        href = link.get("href")
-        p = _resolve_local_path(base_dir, href)
-        if p and p.exists():
-            try:
-                css_text = p.read_text(encoding="utf-8", errors="ignore")
-                css_text = _inline_css_urls(css_text, p.parent)
-                style_tag = soup.new_tag("style")
-                style_tag.string = css_text
-                link.replace_with(style_tag)
-            except Exception:
-                pass
-    return str(soup)
-
-def extract_first_html_from_zip(zf: zipfile.ZipFile):
-    html_names = [n for n in zf.namelist() if n.lower().endswith(".html")]
-    if not html_names: return None
-    for n in html_names:
-        if os.path.basename(n).lower() in ("index.html","notion.html"):
-            return n
-    return html_names[0]
 
 # ================== Sidebar ==================
 with st.sidebar:
@@ -242,25 +59,13 @@ with st.sidebar:
     st.button("🗒️ Notion", key="notion_btn", use_container_width=True, on_click=nav_click, args=("notion",))
     st.button("📧 Spam", key="spam_btn", use_container_width=True, on_click=nav_click, args=("spam",))
     st.button("🗑️ Waste", key="waste_btn", use_container_width=True, on_click=nav_click, args=("waste",))
-    st.markdown('<hr style="border:none;border-top:1px solid #e8e8e8;margin:10px 0 8px;">', unsafe_allow_html=True)
+    st.caption(f"📂 ROOT: {ROOT}")
 
 page = st.session_state.page
 
 # ================== PAGE 1: Profile ==================
 def show_profile(name, student_id, major, interest, experience, skills, img_url=None):
     st.title("👤 Profile Page")
-    if not img_url:
-        c1, c2 = st.columns([1,1])
-        with c1:
-            up = st.file_uploader("อัปโหลดรูป (jpg/png)", type=["jpg","jpeg","png"])
-            if up:
-                data = up.read()
-                b64 = base64.b64encode(data).decode("utf-8")
-                img_url = f"data:image/jpeg;base64,{b64}"
-        with c2:
-            url = st.text_input("หรือใส่ URL ของรูป (http/https)")
-            if url:
-                img_url = url
     img_html = f'<img src="{img_url}" width="120" style="border-radius:50%; border:3px solid #4CAF50;">' if img_url else ""
     st.markdown(
         f"""
@@ -276,255 +81,66 @@ def show_profile(name, student_id, major, interest, experience, skills, img_url=
         """,
         unsafe_allow_html=True
     )
-    with st.container():
-        st.subheader("💡 ความสนใจด้าน Data Science / Data Mining")
-        st.info(interest)
-    with st.container():
-        st.subheader("🚀 ประสบการณ์")
-        st.write(experience)
-    with st.container():
-        st.subheader("🛠️ Skillset")
-        cols = st.columns(2)
-        for i, skill in enumerate(skills):
-            with cols[i % 2]:
-                st.success(skill)
+    st.subheader("💡 ความสนใจด้าน Data Science / Data Mining")
+    st.info(interest)
+    st.subheader("🚀 ประสบการณ์")
+    st.write(experience)
+    st.subheader("🛠️ Skillset")
+    cols = st.columns(2)
+    for i, skill in enumerate(skills):
+        with cols[i % 2]:
+            st.success(skill)
     st.markdown("---")
     st.success("🎉 ขอบคุณที่เข้ามาชมโปรไฟล์ครับ")
 
-# ================== PAGE 2: Notion (with YouTube Dashboard Mode) ==================
+# ================== PAGE 2: Notion ==================
 def render_notion():
-    st.markdown("<h2>🗒️ Notion</h2><div class='subtle'>โหมดแสดงผล Notion หรือ Dashboard YouTube (เฉพาะหน้านี้)</div>", unsafe_allow_html=True)
+    st.markdown("<h2>🗒️ Notion</h2><div class='subtle'>แนบไฟล์จาก Notion Export (ZIP/HTML)</div>", unsafe_allow_html=True)
+    up = st.file_uploader("อัปโหลด Notion HTML หรือ ZIP", type=["html","htm","zip"])
+    if not up:
+        st.info("คำแนะนำ: ให้อัปโหลดไฟล์ ZIP จาก Notion Export เพื่อให้รูป/สไตล์แสดงครบ")
+        return
 
-    mode = st.radio("โหมดการใช้งาน", ["Notion Viewer", "YouTube TH Top 1000 Dashboard"], horizontal=True)
+    suffix = Path(up.name).suffix.lower()
+    if suffix in [".html", ".htm"]:
+        html = up.read().decode("utf-8", errors="ignore")
+        st.components.v1.html(html, height=820, scrolling=True)
+        return
 
-    # -------- Mode A: Notion Viewer --------
-    if mode == "Notion Viewer":
-        up = st.file_uploader("อัปโหลด Notion HTML หรือ ZIP", type=["html","htm","zip"])
-        if not up:
-            st.info("คำแนะนำ: ให้อัปโหลดไฟล์ **ZIP** จาก Notion Export เพื่อให้รูป/สไตล์แสดงครบ")
-            return
-
-        suffix = Path(up.name).suffix.lower()
-        if suffix in [".html", ".htm"]:
-            st.warning("อัปโหลด HTML เดี่ยวอาจไม่เห็นรูป (relative path). แนะนำ ZIP")
-            html = up.read().decode("utf-8", errors="ignore")
-            st.components.v1.html(html, height=820, scrolling=True)
-            return
-
-        if suffix == ".zip":
-            try:
-                with tempfile.TemporaryDirectory() as td:
-                    tmpdir = Path(td)
-                    with zipfile.ZipFile(io.BytesIO(up.read())) as z:
-                        z.extractall(tmpdir)
-                    candidate = None
-                    html_files = list(tmpdir.rglob("*.html"))
-                    if not html_files:
-                        st.error("ไม่พบไฟล์ HTML ภายใน ZIP")
-                        return
-                    for p in html_files:
-                        if p.name.lower() == "index.html":
-                            candidate = p
-                            break
-                    if candidate is None:
-                        candidate = html_files[0]
-                    raw_html = candidate.read_text(encoding="utf-8", errors="ignore")
-                    inlined_html = inline_assets(raw_html, candidate.parent)
-                    st.components.v1.html(inlined_html, height=820, scrolling=True)
-                    num_imgs = len(list(candidate.parent.rglob("*.png"))) + len(list(candidate.parent.rglob("*.jpg"))) + len(list(candidate.parent.rglob("*.jpeg"))) + len(list(candidate.parent.rglob("*.gif"))) + len(list(candidate.parent.rglob("*.svg")))
-                    st.caption(f"✅ Inline assets เสร็จสิ้น ~{num_imgs} รูป")
-            except Exception as e:
-                st.error(f"อ่าน ZIP ไม่สำเร็จ: {e}")
-
-    # -------- Mode B: YouTube Dashboard --------
-    else:
-        import requests, bs4, pandas as pd, altair as alt
-
-        st.title('📊 Dashboard วิเคราะห์ Top 1000 YouTube Videos in Thailand')
-        st.markdown("""
-แอปพลิเคชันนี้ทำการดึงข้อมูล (Scraping) จากเว็บ
-[youtubers.me](https://th.youtubers.me/thailand/all/top-1000-youtube-videos-in-thailand)
-เพื่อวิเคราะห์แนวโน้มและ Insight ที่น่าสนใจของวิดีโอยอดนิยม 1,000 อันดับแรกในประเทศไทย
-""")
-
-        @st.cache_data
-        def load_and_clean_data():
-            response = requests.get('https://th.youtubers.me/thailand/all/top-1000-youtube-videos-in-thailand')
-            response.encoding = 'utf-8'
-            soup = bs4.BeautifulSoup(response.text, 'html.parser')
-
-            data = []
-            tables = soup.find_all('table')
-            if not tables:
-                return pd.DataFrame(columns=['Rank','Vid_name','Views','Like','Dislike','Category','Publish'])
-
-            for row in tables[0].find_all('tr'):
-                columns = row.find_all('td')
-                if len(columns) >= 7:
-                    rank = columns[0].text.strip()
-                    views = columns[2].text.strip()
-                    like = columns[3].text.strip()
-                    dislike = columns[4].text.strip()
-                    category = columns[5].text.strip()
-                    publish = columns[6].text.strip()
-                    img_tag = columns[1].find('img')
-                    vid_name = img_tag['alt'].strip() if img_tag else 'N/A'
-                    data.append([rank, vid_name, views, like, dislike, category, publish])
-
-            import pandas as pd
-            df = pd.DataFrame(data, columns=['Rank', 'Vid_name', 'Views', 'Like', 'Dislike', 'Category', 'Publish'])
-            df = df[df['Category'] != '']
-
-            for col in ['Views', 'Like', 'Dislike']:
-                df[col] = pd.to_numeric(df[col].str.replace(',', ''), errors='coerce')
-
-            df.dropna(subset=['Views', 'Like'], inplace=True)
-            df = df.astype({'Views': 'int64', 'Like': 'int64'})
-
-            df['Engagement_Rate'] = df.apply(
-                lambda row: (row['Like'] / row['Views']) * 100 if row['Views'] > 0 else 0, axis=1
-            )
-            return df
-
-        with st.spinner('กำลังดึงและประมวลผลข้อมูลล่าสุด...'):
-            df = load_and_clean_data()
-
-        # KPIs
-        st.header('ภาพรวมข้อมูล (Overall KPIs)')
-        col1, col2, col3 = st.columns(3)
-        total_videos = len(df)
-        total_views = df['Views'].sum()
-        top_category = df['Category'].mode()[0] if not df.empty else "-"
-        col1.metric("จำนวนวิดีโอที่วิเคราะห์", f"{total_videos:,.0f}")
-        col2.metric("ยอดวิวรวมทั้งหมด", f"{total_views/1e9:.2f} พันล้าน")
-        col3.metric("หมวดหมู่ยอดนิยมที่สุด", top_category)
-        st.divider()
-
-        # Yearly Trends
-        st.header('1. แนวโน้มภาพรวมในแต่ละปี (Yearly Trends)')
-        if not df.empty:
-            df['Publish'] = pd.to_numeric(df['Publish'], errors='coerce')
-            df_filtered_years = df.dropna(subset=['Publish'])
-            df_filtered_years = df_filtered_years[(df_filtered_years['Publish'] >= 2014) & (df_filtered_years['Publish'] <= 2025)]
-            if not df_filtered_years.empty:
-                yearly_stats = df_filtered_years.groupby('Publish').agg(
-                    Video_Count=('Vid_name', 'count'),
-                    Average_Views=('Views', 'mean')
-                ).reset_index().rename(columns={'Publish': 'Year'})
-                st.dataframe(yearly_stats, use_container_width=True)
-                st.line_chart(yearly_stats.rename(columns={'Year':'index'}).set_index('index')['Average_Views'])
-                st.caption("กราฟเส้นแสดงยอดวิวเฉลี่ยของวิดีโอที่ติด Top 1000 ในแต่ละปี")
-            else:
-                st.info("ไม่มีข้อมูลในช่วงปีที่กำหนด (2014-2025)")
-        else:
-            st.info("ไม่มีข้อมูลเพียงพอสำหรับ Yearly Trends")
-        st.divider()
-
-        # Category Popularity
-        st.header('2. หมวดหมู่ยอดนิยมในแต่ละปี (Category Popularity)')
-        if not df.empty and not df_filtered_years.empty:
-            col_chart1, col_chart2 = st.columns(2)
-            with col_chart1:
-                st.subheader("สัดส่วนหมวดหมู่ยอดนิยมอันดับ 1")
-                def get_top_category_proportion(group):
-                    category_counts = group['Category'].value_counts()
-                    if category_counts.empty:
-                        return pd.Series({'Top Video Category': None, 'Top Category Proportion (%)': 0})
-                    top_category = category_counts.index[0]
-                    proportion = (category_counts.iloc[0] / category_counts.sum()) * 100
-                    return pd.Series({'Top Video Category': top_category, 'Top Category Proportion (%)': proportion})
-
-                yearly_category_stats = df_filtered_years.groupby('Publish').apply(get_top_category_proportion).reset_index()
-                yearly_category_stats = yearly_category_stats.rename(columns={'Publish': 'Year'})
-
-                import altair as alt
-                chart1 = alt.Chart(yearly_category_stats).mark_bar().encode(
-                    x=alt.X('Year:O', title='ปี'),
-                    y=alt.Y('Top Category Proportion (%):Q', title='สัดส่วน (%)'),
-                    color=alt.Color('Top Video Category:N', title='หมวดหมู่'),
-                    tooltip=['Year', 'Top Video Category', 'Top Category Proportion (%)']
-                ).properties(title='สัดส่วนของหมวดหมู่วิดีโอยอดนิยมอันดับ 1 ในแต่ละปี')
-                st.altair_chart(chart1, use_container_width=True)
-
-            with col_chart2:
-                st.subheader("สัดส่วนหมวดหมู่อันดับ 2 และ 3")
-                def get_top2_top3_category_proportion(group):
-                    category_counts = group['Category'].value_counts()
-                    total_count = category_counts.sum()
-                    top2_category, top2_proportion = (None, None)
-                    top3_category, top3_proportion = (None, None)
-                    if len(category_counts) >= 2:
-                        top2_category = category_counts.index[1]
-                        top2_proportion = (category_counts.iloc[1] / total_count) * 100
-                    if len(category_counts) >= 3:
-                        top3_category = category_counts.index[2]
-                        top3_proportion = (category_counts.iloc[2] / total_count) * 100
-                    return pd.Series({
-                        'Top 2 Category': top2_category, 'Top 2 Proportion (%)': top2_proportion,
-                        'Top 3 Category': top3_category, 'Top 3 Proportion (%)': top3_proportion
-                    })
-
-                yearly_top2_top3_stats = df_filtered_years.groupby('Publish').apply(get_top2_top3_category_proportion).reset_index()
-                yearly_top2_top3_stats = yearly_top2_top3_stats.rename(columns={'Publish': 'Year'})
-                melted_data = yearly_top2_top3_stats.melt(
-                    id_vars=['Year'],
-                    value_vars=['Top 2 Proportion (%)', 'Top 3 Proportion (%)'],
-                    var_name='Rank', value_name='Proportion'
-                )
-                chart2 = alt.Chart(melted_data).mark_bar().encode(
-                    x=alt.X('Year:O', title='ปี'),
-                    y=alt.Y('Proportion:Q', title='สัดส่วน (%)'),
-                    color=alt.Color('Rank:N', title='อันดับ'),
-                    tooltip=['Year', 'Rank', 'Proportion']
-                ).properties(title='สัดส่วนของหมวดหมู่วิดีโอยอดนิยมอันดับ 2 และ 3')
-                st.altair_chart(chart2, use_container_width=True)
-        else:
-            st.info("ไม่มีข้อมูลเพียงพอสำหรับ Category Popularity")
-        st.divider()
-
-        # Deep Dive + Engagement
-        st.header('3. เจาะลึกรายหมวดหมู่และ Engagement (Deep Dive)')
-        if not df.empty:
-            col_engage, col_search = st.columns([1, 2])
-            with col_engage:
-                st.subheader("หมวดหมู่ที่สร้าง Engagement สูงสุด")
-                engagement_by_category = df.groupby('Category')['Engagement_Rate'].mean().sort_values(ascending=False).reset_index()
-                st.dataframe(
-                    engagement_by_category,
-                    column_config={
-                        "Category": "หมวดหมู่",
-                        "Engagement_Rate": st.column_config.ProgressColumn(
-                            "Engagement Rate (Avg %)",
-                            format="%.2f%%",
-                            min_value=0,
-                            max_value=float(engagement_by_category['Engagement_Rate'].max()) if not engagement_by_category.empty else 1
-                        )
-                    },
-                    use_container_width=True
-                )
-                st.caption("คำนวณจาก (Likes / Views) * 100")
-            with col_search:
-                st.subheader("ค้นหาวิดีโอยอดนิยมตามหมวดหมู่")
-                category_list = ['All'] + sorted(df['Category'].dropna().unique().tolist())
-                selected_category = st.selectbox("เลือกหมวดหมู่ที่สนใจ:", category_list)
-                display_df = df if selected_category == 'All' else df[df['Category'] == selected_category]
-                st.dataframe(display_df[['Rank', 'Vid_name', 'Views', 'Like', 'Publish']].head(20), use_container_width=True)
-        else:
-            st.info("ไม่มีข้อมูลเพียงพอสำหรับการเจาะลึก")
-        st.divider()
-        st.info("Dashboard นี้สร้างขึ้นโดยใช้ข้อมูลจากการวิเคราะห์โค้ด Python ของคุณ (รวมอยู่ในหน้า Notion เท่านั้น)")
+    if suffix == ".zip":
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                tmpdir = Path(td)
+                with zipfile.ZipFile(io.BytesIO(up.read())) as z:
+                    z.extractall(tmpdir)
+                html_files = list(tmpdir.rglob("*.html"))
+                if not html_files:
+                    st.error("ไม่พบไฟล์ HTML ภายใน ZIP")
+                    return
+                candidate = next((p for p in html_files if p.name.lower()=="index.html"), html_files[0])
+                html = candidate.read_text(encoding="utf-8", errors="ignore")
+                st.components.v1.html(html, height=820, scrolling=True)
+        except Exception as e:
+            st.error(f"อ่าน ZIP ไม่สำเร็จ: {e}")
 
 # ================== PAGE 3: Spam ==================
+def load_sms_dataset_safely(path_str: str):
+    import pandas as pd
+    for sep in ["\t", ","]:
+        for enc in ("utf-8", "latin1", "utf-8-sig"):
+            try:
+                df = pd.read_csv(path_str, sep=sep, header=None, encoding=enc, engine="python", on_bad_lines="warn")
+                if df.shape[1] >= 2:
+                    first = df.iloc[:, 0].astype(str)
+                    rest = df.iloc[:, 1:].astype(str).agg(" ".join, axis=1)
+                    return pd.DataFrame({"label": first, "message": rest})
+            except Exception:
+                continue
+    raise RuntimeError("ไม่สามารถอ่านไฟล์ได้")
+
 def render_spam():
     import pandas as pd
-    # ----- รองรับกรณีไม่มี matplotlib -----
-    try:
-        import matplotlib.pyplot as plt
-        _HAS_MPL = True
-    except ModuleNotFoundError:
-        plt = None
-        _HAS_MPL = False
-
+    import joblib
     from sklearn.model_selection import train_test_split
     from sklearn.pipeline import Pipeline
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -532,446 +148,137 @@ def render_spam():
     from sklearn.svm import LinearSVC
     from sklearn.naive_bayes import MultinomialNB, ComplementNB
     from sklearn.ensemble import RandomForestClassifier
-    from sklearn.metrics import (
-        accuracy_score, precision_score, recall_score, f1_score,
-        confusion_matrix, roc_auc_score, roc_curve, classification_report
-    )
-    import joblib
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_auc_score, roc_curve, classification_report
 
-    st.markdown("<h2>📧 SMS/Email Spam</h2><div class='subtle'>ทดสอบข้อความว่าเป็น Ham หรือ Spam</div>", unsafe_allow_html=True)
+    st.markdown("<h2>📧 SMS/Email Spam</h2>", unsafe_allow_html=True)
+    txt = st.text_area("ข้อความที่ต้องการทำนาย", height=100, placeholder="เช่น: Win a FREE iPhone now!")
 
-    # ---------- ค้นหาไฟล์อัตโนมัติ ----------
-    found_model = smart_find(names=["spam_model"], exts=[".pkl"])
-    found_vec   = smart_find(names=["vectorizer"], exts=[".pkl"])
-    found_data  = smart_find(names=["SMSSpamCollection"], exts=[".csv", ".tsv", ".txt"])
+    if st.button("ทำนาย", use_container_width=True):
+        if not txt.strip():
+            st.warning("กรุณาใส่ข้อความก่อนทำนาย")
+        elif not (SPAM_MODEL_PATH.exists() and SPAM_VECT_PATH.exists()):
+            st.error(f"ไม่พบไฟล์โมเดลที่ {SPAM_MODEL_PATH} หรือ {SPAM_VECT_PATH}")
+        else:
+            model = joblib.load(SPAM_MODEL_PATH)
+            vectorizer = joblib.load(SPAM_VECT_PATH)
+            X = vectorizer.transform([txt])
+            y = model.predict(X)[0]
+            st.success(f"ผลทำนาย: **{'Spam' if y==1 else 'Ham'}**")
 
-    show_found_paths("Spam model", found_model)
-    show_found_paths("Spam vectorizer", found_vec)
-    show_found_paths("Spam dataset", found_data)
+    st.markdown("---")
+    if st.button("🚀 Run report (ใช้ไฟล์คงที่ใน main/Bigdata/)"):
+        if not SPAM_DATA_PATH.exists():
+            st.error(f"ไม่พบไฟล์ข้อมูลที่ {SPAM_DATA_PATH}")
+            return
+        df = load_sms_dataset_safely(str(SPAM_DATA_PATH))
+        df["label"] = df["label"].astype(str).str.lower().map({"ham":0,"spam":1})
+        df = df[df["label"].isin([0,1])].dropna(subset=["message"]).drop_duplicates()
 
-    model_path = st.selectbox(
-        "เลือกไฟล์โมเดล (หรือปล่อยว่างถ้ายังไม่มี)",
-        options=["(ไม่เลือก)"] + [str(p) for p in found_model],
-        index=0
-    )
-    vec_path = st.selectbox(
-        "เลือกไฟล์เวกเตอร์ (หรือปล่อยว่างถ้ายังไม่มี)",
-        options=["(ไม่เลือก)"] + [str(p) for p in found_vec],
-        index=0
-    )
-    data_path = st.selectbox(
-        "เลือกไฟล์ข้อมูล (SMSSpamCollection) สำหรับเทรน/รีพอร์ต",
-        options=["(ไม่เลือก)"] + [str(p) for p in found_data],
-        index=0
-    )
-
-    # อัปโหลดแทนได้
-    with st.expander("⬆️ อัปโหลดไฟล์ (.pkl/.csv/.tsv/.txt) เพิ่มเติม", expanded=False):
-        upl_model = st.file_uploader("โมเดล (spam_model.pkl)", type=["pkl"], key="upl_m")
-        upl_vec   = st.file_uploader("เวกเตอร์ (vectorizer.pkl)", type=["pkl"], key="upl_v")
-        upl_data  = st.file_uploader("ดาต้า (SMSSpamCollection)", type=["csv","tsv","txt"], key="upl_d")
-        save_dir = st.text_input("บันทึกลงโฟลเดอร์", value=str((SCRIPT_DIR / "uploaded").resolve()))
-        if st.button("บันทึกไฟล์ที่อัปโหลด"):
-            ok = True
-            if upl_model is not None: ok &= save_uploaded_file(Path(save_dir) / "spam_model.pkl", upl_model)
-            if upl_vec   is not None: ok &= save_uploaded_file(Path(save_dir) / "vectorizer.pkl", upl_vec)
-            if upl_data  is not None:
-                ext = Path(upl_data.name).suffix.lower() or ".csv"
-                ok &= save_uploaded_file(Path(save_dir) / f"SMSSpamCollection{ext}", upl_data)
-            if ok:
-                st.success("บันทึกไฟล์เรียบร้อย • โปรดเลือกไฟล์จากรายการด้านบน (อาจกด Rerun)")
-
-    have_files = (model_path != "(ไม่เลือก)" and vec_path != "(ไม่เลือก)")
-
-    # ---- ทำนายข้อความเดี่ยว (แสดงเมื่อมีไฟล์โมเดล+เวกเตอร์) ----
-    if have_files:
-        with st.container():
-            st.markdown("### 🔎 ทำนายข้อความเดี่ยว")
-            txt = st.text_area("ใส่ข้อความที่ต้องการทำนาย", height=100, placeholder="เช่น: Win a FREE iPhone now! Click link…")
-            if st.button("ทำนาย", use_container_width=True):
-                if not txt.strip():
-                    st.warning("กรุณาใส่ข้อความก่อนทำนาย")
-                else:
-                    try:
-                        model = joblib.load(model_path)
-                        vectorizer = joblib.load(vec_path)
-                        X = vectorizer.transform([txt])
-                        if hasattr(model, "predict_proba"):
-                            p = model.predict_proba(X)[0]
-                            spam_class_index = np.where(model.classes_ == 1)[0][0]
-                            ham_class_index  = np.where(model.classes_ == 0)[0][0]
-                            spam_p = float(p[spam_class_index])
-                            ham_p  = float(p[ham_class_index])
-                            pred = "Spam" if spam_p > ham_p else "Ham"
-                            st.success(f"ผลทำนาย: **{pred}** | Ham={ham_p:.4f}  Spam={spam_p:.4f}")
-                        else:
-                            y = model.predict(X)[0]
-                            pred_label = "Spam" if y == 1 else "Ham"
-                            st.success(f"ผลทำนาย: **{pred_label}**")
-                    except Exception as e:
-                        st.error(f"เกิดข้อผิดพลาด: {e}")
-        st.markdown("---")
-    else:
-        st.info("ยังไม่เลือกโมเดลและเวกเตอร์ • เลือกจากรายการด้านบนหรืออัปโหลด/เทรนก่อน")
-
-    # ---- Business & Dataset ----
-    with st.expander("💼 Business Value & Use Cases", expanded=True):
-        st.markdown(
-            """
-- ลดความเสี่ยงฟิชชิง/หลอกลวง, ประหยัดเวลาคัดกรองข้อความ, เพิ่มความเชื่อมั่นให้ผู้ใช้
-- ใช้งาน: กรองสแปมอีเมล/แชตแบบเรียลไทม์, เตือนข้อความเสี่ยง, บันทึกเหตุการณ์อัตโนมัติ
-            """
-        )
-    with st.expander("📚 แหล่งข้อมูล (Dataset)", expanded=True):
-        st.markdown(
-            """
-- **ชุดข้อมูล:** *SMS Spam Collection* (ป้ายกำกับ `ham`/`spam`)
-- **ไฟล์:** `SMSSpamCollection.(csv/tsv/txt)` — โค้ดจะค้นหาเองอัตโนมัติในโปรเจกต์
-            """
-        )
-
-    # ---- ค่า/ตัวเลือก ----
-    test_size       = 0.2
-    random_state    = 42
-    vec_name        = "TfidfVectorizer"
-    ngram           = "(1,2)"
-    max_features    = 5000
-    stop_words      = "english"
-
-    # ---- Helpers ----
-    from sklearn.metrics import roc_auc_score, roc_curve
-    def build_vectorizer():
-        from sklearn.feature_extraction.text import TfidfVectorizer
-        return TfidfVectorizer(lowercase=True, stop_words=stop_words, ngram_range=(1,2), max_features=max_features)
-
-    def build_models():
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.svm import LinearSVC
-        from sklearn.naive_bayes import MultinomialNB, ComplementNB
-        from sklearn.ensemble import RandomForestClassifier
-        return {
+        X_train, X_test, y_train, y_test = train_test_split(df["message"], df["label"], test_size=0.2, random_state=42)
+        vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1,2), max_features=5000)
+        models = {
             "LogisticRegression": LogisticRegression(max_iter=2000),
-            "LinearSVC": LinearSVC(dual=True),
+            "LinearSVC": LinearSVC(),
             "MultinomialNB": MultinomialNB(),
             "ComplementNB": ComplementNB(),
-            "RandomForest": RandomForestClassifier(n_estimators=100, random_state=random_state, n_jobs=-1),
+            "RandomForest": RandomForestClassifier(n_estimators=100, random_state=42),
         }
 
-    def compute_metrics(y_true, y_pred, y_prob=None):
-        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-        acc = accuracy_score(y_true, y_pred)
-        pre = precision_score(y_true, y_pred, pos_label=1, zero_division=0)
-        rec = recall_score(y_true, y_pred, pos_label=1, zero_division=0)
-        f1  = f1_score(y_true, y_pred, pos_label=1, zero_division=0)
-        auc = None
-        if y_prob is not None:
-            try:
-                auc = roc_auc_score(y_true, y_prob)
-            except Exception:
-                auc = None
-        return {"accuracy":acc,"precision":pre,"recall":rec,"f1":f1,"roc_auc":auc}
+        rows = []
+        for name, clf in models.items():
+            pipe = Pipeline([("vec", vectorizer), ("clf", clf)])
+            pipe.fit(X_train, y_train)
+            y_pred = pipe.predict(X_test)
+            y_prob = pipe.predict_proba(X_test)[:,1] if hasattr(clf,"predict_proba") else None
+            rows.append({
+                "Model": name,
+                "Accuracy": accuracy_score(y_test,y_pred),
+                "Precision": precision_score(y_test,y_pred),
+                "Recall": recall_score(y_test,y_pred),
+                "F1": f1_score(y_test,y_pred),
+                "ROC-AUC": roc_auc_score(y_test,y_prob) if y_prob is not None else None
+            })
+        st.dataframe(pd.DataFrame(rows))
 
-    def plot_cm(cm, labels=("ham(0)","spam(1)")):
-        if not _HAS_MPL:
-            return None
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(figsize=(4, 3))
-        ax.imshow(cm, interpolation="nearest", cmap=plt.cm.Blues)
-        ax.set_xticks([0,1]); ax.set_xticklabels(labels, rotation=0)
-        ax.set_yticks([0,1]); ax.set_yticklabels(labels)
-        ax.set_xlabel("Predicted label")
-        ax.set_ylabel("True label")
-        for i in range(cm.shape[0]):
-            for j in range(cm.shape[1]):
-                ax.text(j, i, f"{cm[i, j]}", ha="center", va="center",
-                        color="white" if cm[i, j] > cm.max() / 2 else "black")
-        fig.tight_layout()
-        return fig
-
-    def plot_roc(y_true, y_prob):
-        if not _HAS_MPL:
-            return None, None
-        import matplotlib.pyplot as plt
-        fpr, tpr, _ = roc_curve(y_true, y_prob)
-        auc_val = roc_auc_score(y_true, y_prob)
-        fig, ax = plt.subplots(figsize=(4, 3))
-        ax.plot(fpr, tpr, lw=2, label=f'ROC (AUC={auc_val:.2f})')
-        ax.plot([0,1],[0,1], lw=2, linestyle="--")
-        ax.set_xlabel("False Positive Rate")
-        ax.set_ylabel("True Positive Rate")
-        ax.set_title("Receiver Operating Characteristic")
-        ax.legend(loc="lower right")
-        fig.tight_layout()
-        return fig, auc_val
-
-    # -------------------- Section: Data preprocessing --------------------
-    go = st.button("🚀 Run report (ค้นหาไฟล์ข้อมูลอัตโนมัติ)")
-    if go:
-        st.header("1) Data preprocessing")
-
-        if data_path == "(ไม่เลือก)":
-            st.error("ยังไม่เลือกไฟล์ข้อมูล (SMSSpamCollection) • เลือกจากรายการด้านบนหรืออัปโหลด")
-            st.stop()
-
-        try:
-            # เดา delimiter อัตโนมัติจากนามสกุล
-            ext = Path(data_path).suffix.lower()
-            sep = "\t" if ext in [".tsv", ".txt"] else ","
-            import pandas as pd
-            df = pd.read_csv(data_path, sep=sep, header=None, names=["label","message"], encoding="latin1")
-        except Exception as e:
-            st.error(f"อ่านไฟล์ไม่สำเร็จ: {e}")
-            st.stop()
-
-        st.markdown(f"""
-- แปลง **label**: `ham→0`, `spam→1`
-- ลบข้อความว่าง (`NaN`) และข้อความซ้ำ
-- แปลงข้อความ → ตัวเลขด้วย **{vec_name}** (`ngram_range={ngram}`, `max_features={max_features}`)
-        """)
-
-        df["label"] = df["label"].astype(str).str.strip().str.lower().map({"ham":0,"spam":1})
-        before = len(df)
-        df = df[df["label"].isin([0,1])]
-        df = df.dropna(subset=["message"]).drop_duplicates(subset=["message"]).reset_index(drop=True)
-        after = len(df)
-
-        c1, c2 = st.columns(2)
-        with c1:
-            st.write("ตัวอย่าง 5 แถวแรก:", df.head())
-        with c2:
-            st.write(f"จำนวนตัวอย่างหลังทำความสะอาด: **{after}** (เดิม {before})")
-            st.write("สัดส่วนคลาส:", df["label"].value_counts().rename({0:"ham(0)",1:"spam(1)"}))
-
-        # -------------------- Section: Model training & Comparison --------------------
-        st.header("2) Model training & comparison")
-        from sklearn.model_selection import train_test_split
-        X_train, X_test, y_train, y_test = \
-            train_test_split(df["message"].astype(str), df["label"].astype(int),
-                             test_size=0.2, random_state=42, stratify=df["label"].astype(int))
-
-        vectorizer = build_vectorizer()
-        models = build_models()
-
-        rows, trained = [], {}
-        with st.spinner("กำลังเทรนและเปรียบเทียบโมเดล..."):
-            for name, clf in models.items():
-                pipe = Pipeline([("vec", vectorizer), ("clf", clf)])
-                pipe.fit(X_train, y_train)
-                y_pred = pipe.predict(X_test)
-
-                y_proba = None
-                if hasattr(pipe.named_steps["clf"], "predict_proba"):
-                    y_proba = pipe.predict_proba(X_test)[:,1]
-                elif hasattr(pipe.named_steps["clf"], "decision_function"):
-                    scores = pipe.decision_function(X_test)
-                    if np.ndim(scores) > 1:
-                        scores = scores[:, 1]
-                    denom = (scores.max() - scores.min()) + 1e-12
-                    y_proba = (scores - scores.min()) / denom
-
-                m = compute_metrics(y_test, y_pred, y_proba)
-                rows.append({"Model": name, "Accuracy": m["accuracy"], "Precision": m["precision"],
-                             "Recall": m["recall"], "F1": m["f1"], "ROC-AUC": m["roc_auc"]})
-                trained[name] = (pipe, y_pred, y_proba)
-
-        import pandas as pd
-        res_df = pd.DataFrame(rows).sort_values(by=["F1","Accuracy"], ascending=False).reset_index(drop=True)
-        st.write("ตารางเปรียบเทียบผลลัพธ์:")
-        numeric_cols = ["Accuracy", "Precision", "Recall", "F1", "ROC-AUC"]
-        st.dataframe(
-            res_df.style.format("{:.4f}", subset=numeric_cols)
-                        .highlight_max(axis=0, color='#d4edda', subset=numeric_cols),
-            use_container_width=True
-        )
-
-        best_name = res_df.iloc[0]["Model"]
-        st.success(f"🏆 Best model: **{best_name}** (ตามค่า F1-Score)")
-        best_pipe, best_pred, best_proba = trained[best_name]
-
-        # -------------------- Section: Evaluation --------------------
-        st.header("3) Evaluation (ของโมเดลที่ชนะ)")
-        from sklearn.metrics import confusion_matrix
-        cm = confusion_matrix(y_test, best_pred, labels=[0,1])
-        cm_fig = plot_cm(cm)
-
-        cA, cB = st.columns(2)
-        with cA:
-            st.write("**Confusion Matrix:**")
-            if cm_fig is None:
-                st.info("ยังไม่ได้ติดตั้ง matplotlib — ติดตั้งก่อนเพื่อดู Confusion Matrix (pip install matplotlib)")
-            else:
-                st.pyplot(cm_fig, clear_figure=True)
-        with cB:
-            if best_proba is not None:
-                st.write("**ROC Curve:**")
-                roc_fig, auc_val = plot_roc(y_test, best_proba)
-                if roc_fig is None:
-                    st.info("ยังไม่ได้ติดตั้ง matplotlib — ติดตั้งก่อนเพื่อดู ROC Curve (pip install matplotlib)")
-                else:
-                    st.pyplot(roc_fig, clear_figure=True)
-            else:
-                st.info("โมเดลนี้ไม่มี probability/score จึงคำนวณ ROC-AUC ไม่ได้")
-
-        st.write("**Classification report:**")
-        from sklearn.metrics import classification_report
-        st.code(classification_report(y_test, best_pred, target_names=["ham(0)","spam(1)"], zero_division=0))
-
-        st.header("4) สรุปผลลัพธ์และคำแนะนำ")
-        best_row = res_df.iloc[0].to_dict()
-        st.markdown(f"""
-- **โมเดลที่ดีที่สุด**: `{best_name}`
-- **ผลลัพธ์เด่น**: Accuracy={best_row['Accuracy']:.3f}, Precision={best_row['Precision']:.3f}, Recall={best_row['Recall']:.3f}, F1={best_row['F1']:.3f}{", ROC-AUC="+str(round(best_row['ROC-AUC'],3)) if pd.notnull(best_row['ROC-AUC']) else ""}
-
-**คำแนะนำ**
-- ถ้าต้องการลด False Negative (กันสแปมหลุด) ให้เน้น Recall ของคลาสสแปม
-- เพิ่มฟีเจอร์ (เช่น ความยาวข้อความ, จำนวน URL/ตัวเลข/สัญลักษณ์พิเศษ)
-- ทำ Hyperparameter Tuning กับโมเดลที่ชนะ
-- มี Monitoring/Periodic Retraining เมื่อดาต้าเปลี่ยน
-        """)
-
-# ================== PAGE 4: Waste (Keras .keras, auto input size + CAMERA) ==================
+# ================== PAGE 4: Waste ==================
 @st.cache_resource
 def load_keras_model(path: str):
     import tensorflow as tf
     return tf.keras.models.load_model(path)
 
 def render_waste():
-    st.markdown("<h2>🗑️ Waste Classification</h2><div class='subtle'>อัปโหลดภาพหรือถ่ายภาพจากกล้อง + ใช้โมเดล Keras (.keras/.h5)</div>", unsafe_allow_html=True)
+    st.markdown("<h2>🗑️ Waste Classification</h2>", unsafe_allow_html=True)
 
-    # ค้นหาโมเดลอัตโนมัติ (.keras/.h5) โดยชื่อยอดฮิต
-    found_models = []
-    for name in ["waste_model", "model", "waste"]:
-        found_models += smart_find(names=[name], exts=[".keras", ".h5"])
-    # unique
-    seen, uniq = set(), []
-    for p in found_models:
-        if str(p) not in seen:
-            uniq.append(p)
-            seen.add(str(p))
-    show_found_paths("Keras models", uniq)
-
-    model_path_str = st.selectbox(
-        "เลือกไฟล์โมเดล (.keras/.h5)",
-        options=["(ยังไม่เลือก)"] + [str(p) for p in uniq],
-        index=0
-    )
-
-    class_names_str = st.text_input("ชื่อคลาส (คั่นด้วยจุลภาค, ลำดับต้องตรงกับตอนเทรน)", value="organic,reuse")
+    class_names_str = st.text_input("ชื่อคลาส (คั่นด้วยจุลภาค)", value="organic,reuse")
     class_names = [c.strip() for c in class_names_str.split(",") if c.strip()]
-
-    # ---- Image Source Selector ----
-    src = st.radio("เลือกแหล่งภาพ", ["อัปโหลดไฟล์", "ถ่ายจากกล้อง (Camera)"], horizontal=True, key="waste_img_src")
+    src = st.radio("เลือกแหล่งภาพ", ["อัปโหลดไฟล์", "ถ่ายจากกล้อง"], horizontal=True)
 
     uploaded_img = None
     if src == "อัปโหลดไฟล์":
-        up_img = st.file_uploader("อัปโหลดรูปภาพ", type=["jpg","jpeg","png"], key="waste_uploader")
-        if up_img is not None:
-            uploaded_img = Image.open(up_img).convert("RGB")
+        up_img = st.file_uploader("อัปโหลดรูป", type=["jpg","jpeg","png"])
+        if up_img: uploaded_img = Image.open(up_img).convert("RGB")
     else:
-        cam_img = st.camera_input("ถ่ายภาพด้วยกล้อง", key="waste_camera")
-        if cam_img is not None:
-            uploaded_img = Image.open(cam_img).convert("RGB")
+        cam_img = st.camera_input("ถ่ายภาพ")
+        if cam_img: uploaded_img = Image.open(cam_img).convert("RGB")
 
-    if st.button("Predict", key="waste_predict_button"):
-        if model_path_str == "(ยังไม่เลือก)":
-            st.warning("กรุณาเลือกโมเดลก่อน")
-            return
-        model_path = Path(model_path_str)
-        if not model_path.exists():
-            st.error(f"ไม่พบไฟล์โมเดลที่: {model_path}")
+    if st.button("Predict"):
+        if not WASTE_MODEL_PATH.exists():
+            st.error(f"ไม่พบไฟล์โมเดลที่ {WASTE_MODEL_PATH}")
             return
         if uploaded_img is None:
             st.warning("กรุณาอัปโหลด/ถ่ายภาพก่อน")
             return
 
-        try:
-            import tensorflow as tf
-            with st.spinner("กำลังโหลดโมเดลและทำนายผล..."):
-                model = load_keras_model(str(model_path))
+        import tensorflow as tf
+        model = load_keras_model(str(WASTE_MODEL_PATH))
+        H, W = 224, 224
+        img_resized = uploaded_img.resize((W, H))
+        arr = np.asarray(img_resized, dtype="float32")/255.0
+        arr = np.expand_dims(arr, axis=0)
+        pred = model.predict(arr)[0]
+        idx = int(np.argmax(pred))
+        conf = float(pred[idx])
+        label = class_names[idx] if idx < len(class_names) else f"Class {idx}"
+        st.success(f"ผลทำนาย: **{label}** | ความมั่นใจ {conf:.2%}")
+        _img(img_resized, caption=f"ภาพที่ใช้ทำนาย ({W}x{H})")
 
-                ishape = model.inputs[0].shape
-                H = int(ishape[1]) if ishape[1] is not None else 224
-                W = int(ishape[2]) if ishape[2] is not None else 224
+    # ---- สรุปการประยุกต์ใช้งานจริง ----
+    st.markdown("---")
+    st.subheader("📌 สรุปการประยุกต์ใช้งานจริง & ประโยชน์")
+    st.markdown("""
+คัดแยกขยะอัจฉริยะ (Smart Bins / MRF): ติดกล้องที่ถังขยะหรือสายพานลำเลียงให้ระบบจำแนกประเภทอัตโนมัติ ลดภาระคนงาน และเพิ่มความแม่นยำการรีไซเคิล  
+IoT + กล้อง ณ จุดทิ้งขยะ: แจ้งเตือนเมื่อพบการทิ้งผิดประเภท (เช่น ขยะอันตรายปะปน) หรือคัดแยกเบื้องต้นก่อนเข้าระบบหลัก  
+งานเทศบาล/มหาวิทยาลัย/ห้างฯ: สื่อสาร “ทิ้งให้ถูกที่” แบบเรียลไทม์ผ่านจอ/แอป ช่วยปรับพฤติกรรมประชาชนและเพิ่มอัตรารีไซเคิล  
+ธุรกิจรีไซเคิล/โลจิสติกส์: ตรวจคุณภาพวัสดุเข้าโรงรีไซเคิล ออกใบรับรองหรือคำนวณมูลค่าจากประเภทวัสดุได้รวดเร็ว  
+ประโยชน์ทางเศรษฐกิจ & สิ่งแวดล้อม: ลดต้นทุนแรงงานและความผิดพลาด เพิ่มอัตรารีไซเคิล ลดของเสียฝังกลบและการปล่อยก๊าซเรือนกระจก  
+ต่อยอดโมเดล: เก็บภาพจริงหน้างานมาปรับปรุงชุดข้อมูล, ทำ active learning, เพิ่มคลาส/ย่อยคลาส (เช่น พลาสติกใส/ทึบ), และติดตามผลแบบ dashboard
+    """)
 
-                img_resized = uploaded_img.resize((W, H))
-                arr = np.asarray(img_resized, dtype="float32") / 255.0
-                arr = np.expand_dims(arr, axis=0)
-
-                pred = model.predict(arr)[0]
-                idx  = int(np.argmax(pred))
-                conf = float(pred[idx])
-
-                label_show = f"Class {idx}"
-                if class_names and len(class_names) > idx:
-                    label_show = class_names[idx]
-
-                st.success(f"ผลทำนาย: **{label_show}** | ความมั่นใจ {conf:.2%}")
-                _img(img_resized, caption=f"ภาพที่ใช้ทำนาย ({W}×{H})")
-
-                with st.expander("Probabilities (ทุกคลาส)"):
-                    try:
-                        import pandas as pd
-                        names = class_names if (class_names and len(class_names) == len(pred)) else [f"Class_{i}" for i in range(len(pred))]
-                        df_prob = pd.DataFrame({"class": names, "probability": pred})
-                        st.dataframe(
-                            df_prob.sort_values("probability", ascending=False)
-                                   .reset_index(drop=True)
-                                   .style.format({"probability": "{:.2%}"}),
-                            use_container_width=True
-                        )
-                    except Exception:
-                        st.write({f"Class {i}": p for i, p in enumerate(pred)})
-
-        except Exception as e:
-            st.error(f"เกิดข้อผิดพลาด: {e}")
-
-    st.info("หมายเหตุ: การถ่ายด้วยกล้องผ่านเบราว์เซอร์ต้องอยู่บน HTTPS หรือ localhost และอนุญาตสิทธิ์การใช้กล้อง")
-
-# ================== PAGE 1 RENDERER ==================
-def render_profile_page():
-    # หาไฟล์รูปโปรไฟล์ FUJI0041.(jpg/jpeg/png) อัตโนมัติ
-    found_img = []
-    for nm in ["FUJI0041", "profile", "avatar", "me"]:
-        found_img += smart_find(names=[nm], exts=[".jpg", ".jpeg", ".png"])
-    # unique
-    seen, uniq = set(), []
-    for p in found_img:
-        if str(p) not in seen:
-            uniq.append(p); seen.add(str(p))
-
-    show_found_paths("Profile image candidates", uniq)
-
-    # default: ใช้ไฟล์แรกที่พบ
-    img_url = None
-    if uniq:
-        img_url = b64_from_image_path(uniq[0])
-        st.caption(f"ใช้รูป: {uniq[0]}")
+# ================== ROUTING ==================
+if page == "profile":
+    if IMG_PROFILE_PATH.exists():
+        img = Image.open(IMG_PROFILE_PATH)
+        buf = BytesIO(); img.convert("RGB").save(buf, format="JPEG")
+        img_b64 = f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}"
     else:
-        st.caption("ไม่พบรูปโปรไฟล์อัตโนมัติ • สามารถอัปโหลด/ใส่ลิงก์ได้ในหน้า")
+        img_b64 = None
+        st.caption(f"ไม่พบรูปโปรไฟล์ที่ {IMG_PROFILE_PATH}")
 
     show_profile(
         name="นาย ศิรวัช ปัญญาสวรรค์",
         student_id="2313110526",
         major="Information Technology",
-        interest="ผมสนใจด้าน Data Science เพราะมองว่า “ข้อมูล” สามารถบอกเล่าเรื่องราวและช่วยให้ตัดสินใจได้อย่างมีเหตุผล โดยเฉพาะการหาความสัมพันธ์หรือรูปแบบที่ซ่อนอยู่ในข้อมูล ซึ่งเป็นส่วนที่ท้าทายและสนุกมาก",
-        experience="- 📌Mini Project วิชา ITE-436: Big Data & Data Mining — ทำโปรเจ็กต์ Spam Email Classification ด้วย SMSSpamCollection Dataset\n"
-                  "- ☁️ โปรเจ็กต์วิเคราะห์ข้อมูล YouTube ศึกษาความสัมพันธ์ระหว่างความยาววิดีโอและยอดวิวโดยใช้ Pandas และ Seaborn\n"
-                  " - 🧑‍💼Staff Event Maruya,Cosnatsu,TIGS,TGS\n"
-                  " - 📸 ตากล้อง ถ่ายภาพในมหาวิทยาลัย,งานReshTech&ตั้งตัว",
+        interest="ผมสนใจด้าน Data Science เพราะข้อมูลช่วยตัดสินใจได้อย่างมีเหตุผลและท้าทายในการค้นหารูปแบบซ่อนอยู่ในข้อมูล",
+        experience="- 📌Mini Project วิชา ITE-436: Big Data & Data Mining — Spam Email Classification\n"
+                  "- ☁️ วิเคราะห์ข้อมูล YouTube ยอดวิวกับความยาววิดีโอด้วย Pandas และ Seaborn\n"
+                  "- 🧑‍💼Staff Event Maruya, Cosnatsu, TIGS, TGS\n"
+                  "- 📸 ถ่ายภาพในมหาวิทยาลัย งาน ReshTech & ตั้งตัว",
         skills=["🐍 Python", "⚙️ SQL", "☁️ Streamlit", "🗄️ BigQuery", "✅ Excel", "📊 HTML"],
-        img_url=img_url
+        img_url=img_b64
     )
-
-# ================== ROUTING ==================
-with st.sidebar:
-    st.caption(f"📂 cwd = {CWD}")
-    st.caption(f"📄 script_dir = {SCRIPT_DIR}")
-
-if st.session_state.page == "profile":
-    render_profile_page()
-elif st.session_state.page == "notion":
+elif page == "notion":
     render_notion()
-elif st.session_state.page == "spam":
+elif page == "spam":
     render_spam()
-elif st.session_state.page == "waste":
+elif page == "waste":
     render_waste()
