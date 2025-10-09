@@ -782,7 +782,7 @@ def render_waste():
 # ================== ROUTING ==================
 if page == "profile":
     # --- Load image directly from the specified path ---
-    image_path = "image/FUJI0041.jpg" # Make sure this path is correct
+    image_path = r"Bigdata/image/FUJI0041.jpg" # Make sure this path is correct
     profile_image = None
     
     # Optional: Keep debugging info for a while if you still have issues
