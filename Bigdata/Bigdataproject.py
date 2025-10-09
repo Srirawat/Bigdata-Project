@@ -413,7 +413,14 @@ def render_notion():
 # ================== PAGE 3: Spam ==================
 def render_spam():
     import pandas as pd
-    import matplotlib.pyplot as plt
+    # ----- รองรับกรณีไม่มี matplotlib -----
+    try:
+        import matplotlib.pyplot as plt
+        _HAS_MPL = True
+    except ModuleNotFoundError:
+        plt = None
+        _HAS_MPL = False
+
     from sklearn.model_selection import train_test_split
     from sklearn.pipeline import Pipeline
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -450,13 +457,11 @@ def render_spam():
                         X = vectorizer.transform([txt])
                         if hasattr(model, "predict_proba"):
                             p = model.predict_proba(X)[0]
-                            # Assuming class 0 is ham, class 1 is spam
-                            # Find the index of the 'spam' class in the model's classes_ attribute
+                            # Assuming classes_: 0=ham, 1=spam
                             spam_class_index = np.where(model.classes_ == 1)[0][0]
                             ham_class_index = np.where(model.classes_ == 0)[0][0]
                             spam_p = float(p[spam_class_index])
                             ham_p = float(p[ham_class_index])
-                            
                             pred = "Spam" if spam_p > ham_p else "Ham"
                             st.success(f"ผลทำนาย: **{pred}** | Ham={ham_p:.4f}  Spam={spam_p:.4f}")
                         else:
@@ -503,7 +508,7 @@ def render_spam():
     def build_models():
         return {
             "LogisticRegression": LogisticRegression(max_iter=2000),
-            "LinearSVC": LinearSVC(dual=True), # Added dual=True for newer scikit-learn versions
+            "LinearSVC": LinearSVC(dual=True),  # dual=True รองรับเวอร์ชันใหม่
             "MultinomialNB": MultinomialNB(),
             "ComplementNB": ComplementNB(),
             "RandomForest": RandomForestClassifier(n_estimators=100, random_state=random_state, n_jobs=-1),
@@ -522,8 +527,10 @@ def render_spam():
                 auc = None
         return {"accuracy":acc,"precision":pre,"recall":rec,"f1":f1,"roc_auc":auc}
 
+    # --- วาดกราฟ: รองรับกรณีไม่ลง matplotlib ---
     def plot_cm(cm, labels=("ham(0)","spam(1)")):
-        import matplotlib.pyplot as plt
+        if not _HAS_MPL:
+            return None
         fig, ax = plt.subplots(figsize=(4, 3))
         ax.imshow(cm, interpolation="nearest", cmap=plt.cm.Blues)
         ax.set_xticks([0,1]); ax.set_xticklabels(labels, rotation=0)
@@ -532,17 +539,19 @@ def render_spam():
         ax.set_ylabel("True label")
         for i in range(cm.shape[0]):
             for j in range(cm.shape[1]):
-                ax.text(j, i, f"{cm[i, j]}", ha="center", va="center", color="white" if cm[i, j] > cm.max() / 2 else "black")
+                ax.text(j, i, f"{cm[i, j]}", ha="center", va="center",
+                        color="white" if cm[i, j] > cm.max() / 2 else "black")
         fig.tight_layout()
         return fig
 
     def plot_roc(y_true, y_prob):
-        import matplotlib.pyplot as plt
+        if not _HAS_MPL:
+            return None, None
         fpr, tpr, _ = roc_curve(y_true, y_prob)
         auc_val = roc_auc_score(y_true, y_prob)
         fig, ax = plt.subplots(figsize=(4, 3))
-        ax.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {auc_val:.2f})')
-        ax.plot([0,1],[0,1], color='navy', lw=2, linestyle="--")
+        ax.plot(fpr, tpr, lw=2, label=f'ROC (AUC={auc_val:.2f})')
+        ax.plot([0,1],[0,1], lw=2, linestyle="--")
         ax.set_xlabel("False Positive Rate")
         ax.set_ylabel("True Positive Rate")
         ax.set_title("Receiver Operating Characteristic")
@@ -560,7 +569,7 @@ def render_spam():
             st.stop()
 
         try:
-            df = pd.read_csv(data_path, sep="\t", header=None, names=["label","message"], encoding="latin1") # Changed encoding
+            df = pd.read_csv(data_path, sep="\t", header=None, names=["label","message"], encoding="latin1")
         except Exception as e:
             st.error(f"อ่านไฟล์ไม่สำเร็จ: {e}")
             st.stop()
@@ -598,7 +607,6 @@ def render_spam():
         rows, trained = [], {}
         with st.spinner("กำลังเทรนและเปรียบเทียบโมเดล..."):
             for name, clf in models.items():
-                from sklearn.pipeline import Pipeline
                 pipe = Pipeline([("vec", vectorizer), ("clf", clf)])
                 pipe.fit(X_train, y_train)
                 y_pred = pipe.predict(X_test)
@@ -608,9 +616,11 @@ def render_spam():
                     y_proba = pipe.predict_proba(X_test)[:,1]
                 elif hasattr(pipe.named_steps["clf"], "decision_function"):
                     scores = pipe.decision_function(X_test)
-                    if len(scores.shape) > 1: # Handle multi-class case if it ever occurs
+                    if np.ndim(scores) > 1:
                         scores = scores[:, 1]
-                    y_proba = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
+                    # Min-Max normalize to 0..1
+                    denom = (scores.max() - scores.min()) + 1e-12
+                    y_proba = (scores - scores.min()) / denom
 
                 m = compute_metrics(y_test, y_pred, y_proba)
                 rows.append({"Model": name, "Accuracy": m["accuracy"], "Precision": m["precision"],
@@ -620,10 +630,7 @@ def render_spam():
         import pandas as pd
         res_df = pd.DataFrame(rows).sort_values(by=["F1","Accuracy"], ascending=False).reset_index(drop=True)
         st.write("ตารางเปรียบเทียบผลลัพธ์:")
-        # กำหนดรายชื่อคอลัมน์ที่เป็นตัวเลข
         numeric_cols = ["Accuracy", "Precision", "Recall", "F1", "ROC-AUC"]
-
-        # ใช้ subset เพื่อระบุให้จัดรูปแบบและไฮไลท์เฉพาะคอลัมน์เหล่านี้
         st.dataframe(
             res_df.style.format("{:.4f}", subset=numeric_cols)
                         .highlight_max(axis=0, color='#d4edda', subset=numeric_cols),
@@ -642,12 +649,18 @@ def render_spam():
         cA, cB = st.columns(2)
         with cA:
             st.write("**Confusion Matrix:**")
-            st.pyplot(cm_fig, clear_figure=True)
+            if cm_fig is None:
+                st.info("ยังไม่ได้ติดตั้ง matplotlib — ติดตั้งก่อนเพื่อดู Confusion Matrix (pip install matplotlib)")
+            else:
+                st.pyplot(cm_fig, clear_figure=True)
         with cB:
             if best_proba is not None:
                 st.write("**ROC Curve:**")
                 roc_fig, auc_val = plot_roc(y_test, best_proba)
-                st.pyplot(roc_fig, clear_figure=True)
+                if roc_fig is None:
+                    st.info("ยังไม่ได้ติดตั้ง matplotlib — ติดตั้งก่อนเพื่อดู ROC Curve (pip install matplotlib)")
+                else:
+                    st.pyplot(roc_fig, clear_figure=True)
             else:
                 st.info("โมเดลนี้ไม่มี probability/score จึงคำนวณ ROC-AUC ไม่ได้")
 
@@ -779,7 +792,6 @@ if page == "profile":
     # โหลดรูปโปรไฟล์ด้วย PIL ตามที่ขอ
     img_url = None
     try:
-        # ใช้เส้นทาง image/FUJI0041.jpg
         img = Image.open("image/FUJI0041.jpg").convert("RGB")
         buf = BytesIO()
         img.save(buf, format="JPEG", quality=90)
@@ -798,7 +810,7 @@ if page == "profile":
                   " - 🧑‍💼Staff Event Maruya,Cosnatsu,TIGS,TGS\n"
                   " - 📸 ตากล้อง ถ่ายภาพในมหาวิทยาลัย,งานReshTech&ตั้งตัว",
         skills=["🐍 Python", "⚙️ SQL", "☁️ Streamlit", "🗄️ BigQuery", "✅ Excel", "📊 HTML"],
-        img_url=img_url  # ถ้าโหลดได้จะแสดงรูปทันที; ถ้าไม่พบ ไว้ให้อัปโหลด/ใส่ URL ได้ตามเดิม
+        img_url=img_url
     )
 elif page == "notion":
     render_notion()
