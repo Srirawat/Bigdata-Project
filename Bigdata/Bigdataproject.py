@@ -9,7 +9,12 @@ import tempfile
 import base64, zipfile, io, os, re, numpy as np
 
 # ================== CONFIG ==================
-st.set_page_config(page_title="Profile + Notion + Spam + Waste", layout="wide")
+st.set_page_config(
+    page_title="Sirawat's Bigdata",    # 1. ชื่อที่จะแสดงบนแท็บของเบราว์เซอร์
+    page_icon="👤",                     # 2. ไอคอน (Favicon) บนแท็บ (ใช้อีโมจิหรือ URL รูปภาพได้)
+    layout="wide",                     # 3. การจัดวาง Layout (wide หรือ centered)
+    initial_sidebar_state="expanded"   # 4. สถานะเริ่มต้นของ Sidebar (auto, expanded, collapsed)
+)
 
 # ================== CSS ==================
 st.markdown(
