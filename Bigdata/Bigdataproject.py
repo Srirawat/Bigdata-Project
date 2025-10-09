@@ -496,7 +496,7 @@ def render_spam():
         )
 
     # ---- ค่ามาตรฐาน ----
-    data_path       = "SMSSpamCollection.csv"
+    data_path       = r"Bigdata/SMSSpamCollection.csv"
     test_size       = 0.2
     random_state    = 42
     vec_name        = "TfidfVectorizer"
@@ -699,7 +699,7 @@ def render_waste():
     st.markdown("<h2>🗑️ Waste Classification</h2><div class='subtle'>อัปโหลดภาพหรือถ่ายภาพจากกล้อง + ใช้โมเดล Keras (.keras/.h5)</div>", unsafe_allow_html=True)
 
     # ---- Settings ----
-    model_path = st.text_input("Path โมเดล (.keras หรือ .h5)", value="waste_model.keras")
+    model_path = st.text_input("Path โมเดล (.keras หรือ .h5)", value= r"Bigdata/waste_model.keras")
     class_names_str = st.text_input("ชื่อคลาส (คั่นด้วยจุลภาค, ลำดับต้องตรงกับตอนเทรน)", value="organic,recyclable")
     class_names = [c.strip() for c in class_names_str.split(",") if c.strip()]
 
