@@ -810,7 +810,7 @@ if page == "profile":
                    "- ☁️ โปรเจ็กต์วิเคราะห์ข้อมูล YouTube ศึกษาความสัมพันธ์ระหว่างความยาววิดีโอและยอดวิวโดยใช้ Pandas และ seaborn\n"
                    " - 🧑‍💼Staff Event Maruya,Cosnatsu,TIGS,TGS\n"
                    " - 📸 ตากล้อง ถ่ายภาพในมหาวิทยาลัย,งานReshTech&ตั้งตัว",
-        skills=["🐍 Python", "⚙️ SQL", "☁️ Streamlit", "🗄️ BigQuery", "✅ Excel", "📊 HTML"],
+        skills=["🐍 Python", "⚙️ SQL", "☁️ Streamlit", "🗄️ BigQuery", "✅ Excel", "📊 HTML","♾️ Mathematics & Statistics","📈 Business Acumen"],
         profile_image=profile_image
     )
 elif page == "notion":
