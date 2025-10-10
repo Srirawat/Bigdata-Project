@@ -206,7 +206,7 @@ def show_profile(name, student_id, major, interest, experience, skills, profile_
 def render_notion():
     st.markdown("<h2>🗒️ Notion</h2><div class='subtle'>โหมดแสดงผล Notion หรือ Dashboard YouTube (เฉพาะหน้านี้)</div>", unsafe_allow_html=True)
 
-    mode = st.radio("โหมดการใช้งาน", ["Notion Viewer", "YouTube TH Top 1000 Dashboard"], horizontal=True)
+    mode = st.radio("โหมดการใช้งาน shorturl:https://shorturl.at/LwEKE", ["Notion Viewer", "YouTube TH Top 1000 Dashboard"], horizontal=True)
 
     # -------- Mode A: Notion Viewer --------
     if mode == "Notion Viewer":
