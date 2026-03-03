@@ -32,7 +32,7 @@ def render_waste():
     # --------------------------------------------------------
 
     # 1. แสดงรูปถังขยะและเขียนอธิบาย
-    bin_image_path = r"C:\Users\usEr\Documents\Bigdata-Project-main\Bigdata\Bigdata\image\ถังขยะ.jpg"
+    bin_image_path = os.path.join(ROOT_DIR, "image", "ถังขยะ.jpg")
     try:
         bin_image = Image.open(bin_image_path)
         _img(bin_image, caption="ถังขยะแยกประเภท")
@@ -155,4 +155,5 @@ def render_waste():
 - **ประโยชน์ทางเศรษฐกิจ & สิ่งแวดล้อม:** ลดต้นทุนแรงงานและความผิดพลาด เพิ่มอัตรารีไซเคิล ลดของเสียฝังกลบและการปล่อยก๊าซเรือนกระจก
 - **ต่อยอดโมเดล:** เก็บภาพจริงหน้างานมาปรับปรุงชุดข้อมูล, ทำ active learning, เพิ่มคลาส/ย่อยคลาส (เช่น พลาสติกใส/ทึบ), และติดตามผลแบบ dashboard
     """)
+
     st.info("หมายเหตุ: การถ่ายด้วยกล้องผ่านเบราว์เซอร์ต้องอยู่บน HTTPS หรือ localhost และอนุญาตสิทธิ์การใช้กล้อง")
