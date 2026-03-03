@@ -1,7 +1,11 @@
-streamlit==1.38.0
-beautifulsoup4==4.12.3
-html5lib==1.1
-html2text==2024.2.26
-tensorflow
+streamlit
+pandas
+numpy
 scikit-learn
+tensorflow-cpu
+beautifulsoup4
+altair
+Pillow
+requests
+joblib
 matplotlib
