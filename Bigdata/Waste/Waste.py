@@ -32,7 +32,7 @@ def render_waste():
     # --------------------------------------------------------
 
     # 1. แสดงรูปถังขยะและเขียนอธิบาย
-    bin_image_path = os.path.join(ROOT_DIR, "Bigdata", "image", "ถังขยะ.jpg")
+    bin_image_path = os.path.join(ROOT_DIR, "image", "ถังขยะ.jpg")
     try:
         bin_image = Image.open(bin_image_path)
         _img(bin_image, caption="ถังขยะแยกประเภท")
