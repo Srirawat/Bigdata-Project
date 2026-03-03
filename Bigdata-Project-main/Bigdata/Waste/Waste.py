@@ -32,7 +32,8 @@ def render_waste():
     # --------------------------------------------------------
 
     # 1. แสดงรูปถังขยะและเขียนอธิบาย
-    bin_image_path = os.path.join(ROOT_DIR, "image", "ถังขยะ.jpg")
+    current_dir = os.path.dirname(os.path.abspath(__file__)) 
+    bin_image_path = os.path.join(current_dir, "image", "ถังขยะ.jpg")
     try:
         bin_image = Image.open(bin_image_path)
         _img(bin_image, caption="ถังขยะแยกประเภท")
@@ -157,3 +158,4 @@ def render_waste():
     """)
 
     st.info("หมายเหตุ: การถ่ายด้วยกล้องผ่านเบราว์เซอร์ต้องอยู่บน HTTPS หรือ localhost และอนุญาตสิทธิ์การใช้กล้อง")
+
